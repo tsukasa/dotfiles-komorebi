@@ -37,6 +37,12 @@ Class SGlob {
     static IniFilePath := Format("{}\komorebi-ahk.ini", A_ScriptDir)
 
     /**
+     * Map to store the start time of the monitor bar processes
+     * @type {Map}
+     */
+    static MonitorBarStartTime := Map()
+
+    /**
      * Saves the initial work area configuration for each monitor so we can
      * restore it when the script exits.
      * @type {Map}
@@ -570,14 +576,31 @@ Class SGlob {
             if (!monitorConnected) {
                 ; Monitor not connected but bar might be active
                 for (currentBarPid in barPidOfMonitor) {
+                    if (currentBarPid == -1)
+                        continue
+                    OutputDebug("Monitor " . monitorConfigNumber . " not connected, closing bar with PID " . currentBarPid)
                     ProcessClose(currentBarPid)
                 }
             }
 
             if (monitorConnected) {
                 ; Monitor connected and at least one bar is already active
-                if (barPidOfMonitor.Length >= 0 && barPidOfMonitor[1] != -1)
+                if (barPidOfMonitor[1] != -1) {
+                    OutputDebug("Bar already running for monitor " . monitorConfigNumber . " with PID " . barPidOfMonitor[1])
                     continue
+                }
+
+                if (SGlob.MonitorBarStartTime.Has(monitorConfigNumber)) {
+                    ; Check if the bar was started recently
+                    startTime := SGlob.MonitorBarStartTime.Get(monitorConfigNumber)
+                    currentTime := A_TickCount
+                    elapsedTime := currentTime - startTime
+
+                    if (elapsedTime < barLaunchWait) {
+                        OutputDebug("Monitor " . monitorConfigNumber . " bar was started recently, skipping...")
+                        continue
+                    }
+                }
 
                 ; Monitor connected but bar is not active
                 ; NOTE: barConfigPattern needs to be concatenated so the format string will be parsed!
@@ -586,6 +609,12 @@ Class SGlob {
                     A_ScriptDir,
                     monitorConfigNumber
                 )
+
+                OutputDebug("Monitor " . monitorConfigNumber . " connected, launching bar in " . barLaunchWait . "ms with command: " . barLaunchCmd)
+
+                ; Mark the start time of the bar process so it does not trigger
+                ; on closely timed repeat calls to this function.
+                SGlob.MonitorBarStartTime.Set(monitorConfigNumber, A_TickCount)
 
                 ; Windows needs to unfuck itself before we can continue,
                 ; otherwise the bar will not be launched correctly.
@@ -825,6 +854,7 @@ Class HotkeyListHelper {
         this.searchBox := this.hotkeyGui.Add("Edit", "w500 h20", "")
         this.searchBox.Opt("-E0x200 +Background" . editBgColor)
         this.searchBox.SetFont("s10", "Courier New")
+        this.searchBox.SetFont("bold")
         this.searchBox.SetFont("c" . editFgColor)
 
         ; ListView for hotkeys
@@ -903,6 +933,9 @@ Class HotkeyListHelper {
      * Hides the hotkey list window.
      */
     HideWindow() {
+        if (!this.IsGuiVisible)
+            return
+        OutputDebug("Hiding hotkey list window...")
         this.hotkeyGui.Hide()
         this.IsGuiVisible := false
     }
@@ -934,7 +967,7 @@ Class HotkeyListHelper {
         this.searchBox.GetPos(&searchBoxX, &searchBoxY, &searchBoxW, &searchBoxH)
 
         ; Move the ListView to the remaining space by using the search box height
-        this.listView.Move(0, searchBoxH + 1, minWidth, minHeight - searchBoxH)
+        this.listView.Move(0, searchBoxH + 2, minWidth, minHeight - searchBoxH)
 
         ; Set the ListView column width
         this.SetListViewColumnWidth()
@@ -1222,6 +1255,11 @@ Class HotkeyListHelper {
      * Shows the Hotkey List window centered on the active monitor.
      */
     ShowWindow() {
+        if (this.IsGuiVisible)
+            return
+
+        OutputDebug("Showing Hotkey List window...")
+
         ; Calculate window dimensions
         w := 800
         h := 250

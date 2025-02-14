@@ -1,0 +1,24 @@
+diff --git a/komorebi/src/process_event.rs b/komorebi/src/process_event.rs
+index 2f8447f..3a1107f 100644
+--- a/komorebi/src/process_event.rs
++++ b/komorebi/src/process_event.rs
+@@ -395,19 +395,8 @@ impl WindowManager {
+                                     && !matches!(event, WindowManagerEvent::Manage(_)));
+ 
+                             if behaviour.float_override {
+-                                // Center floating windows if we are already on the `Floating`
+-                                // layer and the window doesn't match a `floating_windows` rule and
+-                                // the workspace is not a floating workspace
+-                                let center_spawned_floats =
+-                                    matches!(workspace.layer, WorkspaceLayer::Floating)
+-                                        && !should_float
+-                                        && workspace.tile;
+                                 workspace.floating_windows_mut().push_back(window);
+                                 workspace.set_layer(WorkspaceLayer::Floating);
+-                                if center_spawned_floats {
+-                                    let mut floating_window = window;
+-                                    floating_window.center(&workspace.globals().work_area)?;
+-                                }
+                                 self.update_focused_workspace(false, false)?;
+                             } else {
+                                 match behaviour.current_behaviour {

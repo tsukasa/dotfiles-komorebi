@@ -1,0 +1,10 @@
+These patches undo changes that I view as detrimental to my user experience.
+
+001_floating_no_center_window.patch
+- Undoes b6bd191cf5bf12231edcb5d8c14ad9994d1dcc97 (https://github.com/LGUG2Z/komorebi/commit/b6bd191cf5bf12231edcb5d8c14ad9994d1dcc97)
+  and 24791f0ce5471acf19d286a9b32fe3d3a0791f94 (https://github.com/LGUG2Z/komorebi/commit/24791f0ce5471acf19d286a9b32fe3d3a0791f94).
+  
+  Resizing and centering floating windows is a direct violation of their intended use case
+  and changes the long-standing default behaviour - something Komorebi is usually prone to not do.
+
+  The desperate effort not to create any new options leads to a worse user experience.

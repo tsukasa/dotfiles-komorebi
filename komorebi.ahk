@@ -37,6 +37,11 @@ Class SGlob {
     static IniFilePath := Format("{}\komorebi-ahk.ini", A_ScriptDir)
 
     /**
+     * Queue of the PIDs of the Komorebi Bar processes that need to be touched.
+     */
+    static KomorebiBarTouchConfigQueue := []
+
+    /**
      * Map to store the start time of the monitor bar processes
      * @type {Map}
      */
@@ -67,6 +72,11 @@ Class SGlob {
      * Array of window handles to restore via pop.
      */
     static WindowStack := []
+
+    /**
+     * WMI object to query various informations
+     */
+    static WmicObject := ComObjGet("winmgmts:{impersonationLevel=impersonate}!\\.\root\cimv2")
 
     /**
      * Adjust the tray icon and tooltip.
@@ -187,11 +197,8 @@ Class SGlob {
         monitorPaths := []
 
         try {
-            ; Create a WMI service object
-            wmiService := ComObjGet("winmgmts:\\.\root\CIMV2")
-
             ; Query all monitors
-            monitors := wmiService.ExecQuery("SELECT * FROM Win32_PnPEntity WHERE PNPClass = 'Monitor'")
+            monitors := SGlob.WmicObject.ExecQuery("SELECT * FROM Win32_PnPEntity WHERE PNPClass = 'Monitor'")
 
             ; Loop through the monitors and get the device instance paths
             for (monitor in monitors)
@@ -386,7 +393,6 @@ Class SGlob {
 
         try {
             pid := 0
-            wmi := ComObjGet("winmgmts:{impersonationLevel=impersonate}!\\.\root\cimv2")
 
             query := Format(
                 "SELECT * FROM Win32_Process WHERE Name = '{}' AND CommandLine LIKE '%{}%'",
@@ -394,7 +400,7 @@ Class SGlob {
                 argument
             )
 
-            for (proc in wmi.ExecQuery(query))
+            for (proc in SGlob.WmicObject.ExecQuery(query))
             {
                 pid := proc.ProcessId
                 listOfPids.Push(pid)
@@ -405,6 +411,47 @@ Class SGlob {
         }
 
         return listOfPids
+    }
+
+    /**
+     * Process the Komorebi Bar touch queue.
+     */
+    static ProcessKomorebiBarTouchConfigQueue() {
+        if (SGlob.KomorebiBarTouchConfigQueue.Has(-1)) {
+            OutputDebug("Touching all Komorebi Bar configs...")
+            ; Empty the queue
+            SGlob.KomorebiBarTouchConfigQueue := []
+            ; Touch all Komorebi Bar processes
+            SGlob.TouchKomorebiBarConfig()
+            ; ...and leave!
+            return
+        }
+
+        ; To ensure we only touch each process once per run!
+        alreadyTouched := []
+
+        while (SGlob.KomorebiBarTouchConfigQueue.Length > 0) {
+            pid := SGlob.KomorebiBarTouchConfigQueue.Pop()
+            
+            if (alreadyTouched.Has(pid)) {
+                OutputDebug("Already touched Komorebi Bar config for PID " . pid . ", skipping...")
+                continue
+            }
+            
+            OutputDebug("Touching Komorebi Bar config for PID " . pid)
+            SGlob.TouchKomorebiBarConfig(pid)
+            alreadyTouched.Push(pid)
+        }
+    }
+
+    /**
+     * Adds a process ID to the Komorebi Bar touch queue.
+     * Can also be -1 to touch all Komorebi Bar processes.
+     * @param {Integer} pid Process ID that should get "the touch".
+     */
+    static QueueKomorebiBarTouchConfig(pid := -1) {
+        OutputDebug("Queueing touching komorebi-bar config for PID: " . pid)
+        SGlob.KomorebiBarTouchConfigQueue.Push(pid)
     }
 
     /**
@@ -632,123 +679,6 @@ Class SGlob {
     }
 
     /**
-     * Moves the active window by a specific delta.
-     * @param {Integer} leftDelta Integer of the delta to move the active window left/right
-     * @param {Integer} topDelta  Integer of the delta to move the active window up/down
-     */
-    static SetActiveWindowPosition(leftDelta, topDelta) {
-        activeWindow := WinExist("A")
-
-        if (!activeWindow)
-            return
-
-        ; Get the center and other dimensions of the active window
-        activeWinPos := SGlob.GetWindowCenter(activeWindow)
-
-        ; Get the monitor the window is on based on the center of the window
-        winMonitor := SGlob.GetMonitorOfWindow(activeWinPos.centerX, activeWinPos.centerY)
-
-        ; If invalid monitor index: return
-        if (winMonitor.monitorIndex = -1)
-            return
-
-        ; Calculate the new window position
-        newLeft := activeWinPos.x + leftDelta
-        newTop := activeWinPos.y + topDelta
-
-        ; Ensure we do not move the window beyond the screen boundaries
-        if (newLeft <= winMonitor.workAreaX)
-            newLeft := winMonitor.workAreaX
-        
-        if (newLeft >= winMonitor.workAreaWidth - activeWinPos.width)
-            newLeft := winMonitor.workAreaWidth - activeWinPos.width
-
-        if (newTop <= winMonitor.workAreaY)
-            newTop := winMonitor.workAreaY
-        
-        if (newTop >= winMonitor.workAreaHeight - activeWinPos.height)
-            newTop := winMonitor.workAreaHeight - activeWinPos.height
-
-        ; Move the window to the new position
-        WinMove(newLeft, newTop, activeWinPos.width, activeWinPos.height, activeWindow)
-    }
-
-    /**
-     * Resizes the active window by the specific width and height deltas.
-     * Will stop the window from going off-screen.
-     * @param {Integer} widthDelta Positive or negative integer to change the width of the active window
-     * @param {Integer} heightDelta Positive or negative integer to change the height of the active window
-     */
-    static SetActiveWindowSize(widthDelta, heightDelta) {
-        activeWindow := WinExist("A")
-
-        if (!activeWindow)
-            return
-
-        ; Get the center and other dimensions of the active window
-        activeWinPos := SGlob.GetWindowCenter(activeWindow)
-
-        ; Get the monitor the window is on based on the center of the window
-        winMonitor := SGlob.GetMonitorOfWindow(activeWinPos.centerX, activeWinPos.centerY)
-
-        ; If invalid monitor index: return
-        if (winMonitor.monitorIndex = -1)
-            return
-
-        ; Calculate the new window size
-        newWidth := activeWinPos.width + widthDelta
-        newHeight := activeWinPos.height + heightDelta
-
-        ; Make sure the window is not being resized to 0
-        if (newWidth <= 0 || newHeight <= 0)
-            return
-
-        ; Try to keep the window centered at its original position
-        winX := activeWinPos.x - (widthDelta // 2)
-        winY := activeWinPos.y - (heightDelta // 2)
-
-        ; If the window touches the screen edges, adjust the position
-        ; to ensure it stays within the screen boundaries of the monitor
-        touchEdgeCountX := 0
-        touchEdgeCountY := 0
-
-        if (winX + newWidth >= winMonitor.workAreaWidth) {
-            winX := winMonitor.workAreaWidth - newWidth
-            touchEdgeCountX += 1
-        }
-
-        if (winX <= winMonitor.workAreaX) {
-            winX := winMonitor.workAreaX
-            touchEdgeCountX += 1
-        }
-
-        if (winY + newHeight >= winMonitor.workAreaHeight) {
-            winY := winMonitor.workAreaHeight - newHeight
-            touchEdgeCountY += 1
-        }
-
-        if (winY <= winMonitor.workAreaY) {
-            winY := winMonitor.workAreaY
-            touchEdgeCountY += 1
-        }
-
-        ; If the window grows too big, we cannot adjust anymore...
-        ; Centering and growing would expand the window beyond the screen boundaries.
-        if (touchEdgeCountX == 2) {
-            winX := activeWinPos.x
-            newWidth := activeWinPos.width
-        }
-
-        if (touchEdgeCountY == 2) {
-            winY := activeWinPos.y
-            newHeight := activeWinPos.height
-        }
-
-        ; Move the window to the new position
-        WinMove(winX, winY, newWidth, newHeight, activeWindow)
-    }
-
-    /**
      * Function to set the taskbar to be topmost.
      * Komorebi seems to put it behind other windows by default...
      */
@@ -808,6 +738,31 @@ Class SGlob {
             )
         }
     }
+
+    /**
+     * Touch komorebi-bar's configuration to force a hot-reload...
+     * Otherwise the bar is too big... (yeah really!)
+     * Optionally allows to specify a PID to wait for.
+     * @param {Integer} pidToWaitFor The process ID to wait for before touching the configuration
+     */
+    static TouchKomorebiConfig(pidToWaitFor := -1) {
+        ; It would be nicer to grab the PID and use WinExist or WinWait
+        ; with ahk_oud, however this approach does not work with
+        ; Scoop's shim executables.
+        ; Instead of overcomplicating things, we'll just wait 500ms.
+        if (pidToWaitFor == -1)
+            ProcessWait("komorebi-bar.exe", 10)
+        else
+            ProcessWait(pidToWaitFor, 10)
+
+        if (ProcessExist("komorebi-bar.exe")) {
+            Sleep 500
+            FileSetTime(
+                A_Now,
+                Format("{}\komorebi.json", A_ScriptDir)
+            )
+        }
+    }
 }
 
 /**
@@ -829,6 +784,9 @@ Class HotkeyListHelper {
         this.hotkeys := []
         this.listViewRelations := Map()
 
+        ; Font for the GUI
+        font := SGlob.ReadIniValue("HotkeyLister", "Font", "Courier New")
+
         ; Clean up unwanted characters from the colors
         fgColor := SGlob.ReadIniValue("HotkeyLister", "ForegroundColor", "00FF00")
         bgColor := SGlob.ReadIniValue("HotkeyLister", "BackgroundColor", "000000")
@@ -841,27 +799,26 @@ Class HotkeyListHelper {
         editBgColor := StrReplace(editBgColor, "#", "")
 
         ; Column width for hotkey column
-        this.columnWidthHotkey := 250
+        this.columnWidthHotkey := 260
 
         ; Main window
         this.hotkeyGui := Gui()
         this.hotkeyGui.Title := "Komorebi AutoHotkey Helper - Hotkey List"
         this.hotkeyGui.BackColor := editFgColor
         this.hotkeyGui.Opt("+AlwaysOnTop +Border -MaximizeBox -MinimizeBox +Resize +Theme -ToolWindow")
-        this.hotkeyGui.SetFont("s10")
         
         ; Search box
         this.searchBox := this.hotkeyGui.Add("Edit", "w500 h20", "")
         this.searchBox.Opt("-E0x200 +Background" . editBgColor)
-        this.searchBox.SetFont("s10", "Courier New")
+        this.searchBox.SetFont("s10", font)
         this.searchBox.SetFont("bold")
         this.searchBox.SetFont("c" . editFgColor)
 
         ; ListView for hotkeys
         this.listView := this.hotkeyGui.Add("ListView", "-Border w500 r15 y+5", ["Hotkey", "Description"])
         this.listView.Opt("-E0x200 +LV0x10000 -Hdr +Report -Multi +Background" . bgColor)
-        this.listView.SetFont("s10", "Courier New")
-        this.listView.SetFont("c" . fgColor, "Courier New")
+        this.listView.SetFont("s10", font)
+        this.listView.SetFont("c" . fgColor)
 
         ; Wire up events
         this.hotkeyGui.OnEvent("Close", this.hotkeyGui_OnClose.Bind(this))
@@ -935,7 +892,9 @@ Class HotkeyListHelper {
     HideWindow() {
         if (!this.IsGuiVisible)
             return
+
         OutputDebug("Hiding hotkey list window...")
+
         this.hotkeyGui.Hide()
         this.IsGuiVisible := false
     }
@@ -1785,16 +1744,16 @@ SGlob.RunAdditionalApplications()
 
 ; ---
 
+; Send a broadcast message to all windows to notify them of settings changes.
+; This ensures that certain internals are being called as intended.
+; SGlob.BroadcastWmSettingChange()
+
+; ---
+
 ; Register all Komorebi Bars as app bars.
 ; Normally, this happens on WM_DISPLAYCHANGE, however for the initial
 ; startup, we need to do this manually.
 SGlob.RegisterKomorebiBarsAsAppBars()
-
-; ---
-
-; Send a broadcast message to all windows to notify them of settings changes.
-; This ensures that certain internals are being called as intended.
-SGlob.BroadcastWmSettingChange()
 
 ; -----------------------------------------------------------------------------
 ; Workarounds                                                                 |
@@ -1847,11 +1806,34 @@ toggleHotkeyListWindow(hk) {
  * Reload the AutoHotkey Script
  * (Win + Alt + A)
  * @context General
- * @keyword ahk autohotkey script reload
+ * @keyword ahk autohotkey script reload bar
  */
 #!A::
 reloadAhkScript(hk) {
     Reload()
+}
+
+/**
+ * Reload the Komorebi Configuration
+ * (Win + Alt + R)
+ * @context Komorebi
+ * @keyword replace-configuration reload
+ */
+#!R::
+reloadKomorebiConfig(hk) {
+    cmd := SGlob.ResolveEnvironmentVariables("replace-configuration %KOMOREBI_CONFIG_HOME%\komorebi.json")
+    SGlob.Komorebic(cmd)
+}
+
+/**
+ * Touch the Komorebi Bar Configuration
+ * (Win + Alt + B)
+ * @context General
+ * @keyword touch komorebi bar configuration
+ */
+#!B::
+touchKomorebiBar(hk) {
+    SGlob.TouchKomorebiBarConfig()
 }
 
 /**
@@ -1862,7 +1844,6 @@ reloadAhkScript(hk) {
 #Numpad0::
 restoreWindow(hk) {
     SGlob.RestoreWindow()
-    return
 }
 
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -1878,7 +1859,6 @@ restoreWindow(hk) {
 #Enter::
 launchTerminal(hk) {
     SGlob.RunDefaultApplication("Terminal")
-    return
 }
 
 /**
@@ -1890,7 +1870,6 @@ launchTerminal(hk) {
 #+Enter::
 launchEditor(hk) {
     SGlob.RunDefaultApplication("Editor")
-    return
 }
 
 /**
@@ -1902,7 +1881,6 @@ launchEditor(hk) {
 #^Enter::
 launchSearch(hk) {
     SGlob.RunDefaultApplication("Search")
-    return
 }
 
 /**
@@ -1914,7 +1892,6 @@ launchSearch(hk) {
 #Backspace::
 launchBrowser(hk) {
     SGlob.RunDefaultApplication("Browser")
-    return
 }
 
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -1930,7 +1907,6 @@ launchBrowser(hk) {
 #Q::
 eagerFocusWavebox(hk) {
     SGlob.Komorebic("eager-focus wavebox.exe")
-    return
 }
 
 /**
@@ -1942,7 +1918,6 @@ eagerFocusWavebox(hk) {
 #W::
 eagerFocusVivaldi(hk) {
     SGlob.Komorebic("eager-focus vivaldi.exe")
-    return
 }
 
 /**
@@ -1954,7 +1929,6 @@ eagerFocusVivaldi(hk) {
 #A::
 eagerFocusMpv(hk) {
     SGlob.Komorebic("eager-focus mpv.exe")
-    return
 }
 
 /**
@@ -1966,7 +1940,6 @@ eagerFocusMpv(hk) {
 #S::
 eagerFocusVsCode(hk) {
     SGlob.Komorebic("eager-focus Code.exe")
-    return
 }
 
 /**
@@ -1978,7 +1951,6 @@ eagerFocusVsCode(hk) {
 #Y::
 eagerFocusMultiplicityRdp(hk) {
     SGlob.Komorebic("eager-focus MPRDP64.exe")
-    return
 }
 
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -1994,7 +1966,6 @@ eagerFocusMultiplicityRdp(hk) {
 #Insert::
 toggleMaximize(hk){
     SGlob.Komorebic("toggle-maximize")
-    return
 }
 
 /**
@@ -2006,7 +1977,6 @@ toggleMaximize(hk){
 #Delete::
 minimizeWindow(hk){
     SGlob.MinimizeWindow()
-    return
 }
 
 /**
@@ -2018,7 +1988,6 @@ minimizeWindow(hk){
 #Escape::
 closeWindow(hk){
     SGlob.Komorebic("close")
-    return
 }
 
 /**
@@ -2033,7 +2002,6 @@ centerRegularActiveWindow(hk) {
         SGlob.KomoDo("center-active-window")
     else
         SGlob.CenterActiveWindow()
-    return
 }
 
 /**
@@ -2045,7 +2013,6 @@ centerRegularActiveWindow(hk) {
 !+R::
 retile(hk) {
     SGlob.Komorebic("retile")
-    return
 }
 
 /**
@@ -2057,7 +2024,6 @@ retile(hk) {
 !+E::
 enforceWorkspaceRules(hk) {
     SGlob.Komorebic("enforce-workspace-rules")
-    return
 }
 
 /**
@@ -2069,7 +2035,6 @@ enforceWorkspaceRules(hk) {
 !+P::
 togglePause(hk) {
     SGlob.Komorebic("toggle-pause")
-    return
 }
 
 /**
@@ -2081,7 +2046,17 @@ togglePause(hk) {
 !+F::
 toggleMouseFollowsFocus(hk) {
     SGlob.Komorebic("toggle-mouse-follows-focus")
-    return
+}
+
+/**
+ * Toggle Workspace Layer
+ * (Win + Alt + Space)
+ * @context Komorebi
+ * @keyword toggle-workspace-layer
+ */
+#!Space::
+toggleWorkspaceLayer(hk) {
+    SGlob.Komorebic("toggle-workspace-layer")
 }
 
 /**
@@ -2093,7 +2068,6 @@ toggleMouseFollowsFocus(hk) {
 #+Space::
 toggleFloatOverride(hk) {
     SGlob.Komorebic("toggle-float-override")
-    return
 }
 
 /**
@@ -2105,7 +2079,6 @@ toggleFloatOverride(hk) {
 !+Space::
 toggleFloat(hk) {
     SGlob.Komorebic("toggle-float")
-    return
 }
 
 /**
@@ -2117,7 +2090,6 @@ toggleFloat(hk) {
 !+M::
 toggleMonocle(hk) {
     SGlob.Komorebic("toggle-monocle")
-    return
 }
 
 /**
@@ -2129,7 +2101,8 @@ toggleMonocle(hk) {
 #+S::
 reinitializeKomorebiBar(hk) {
     SGlob.RunOrKillKomorebiBarOnDisplayChange()
-    return
+    SGlob.ProcessKomorebiBarTouchConfigQueue()
+    SGlob.RegisterKomorebiBarsAsAppBars()
 }
 
 /**
@@ -2141,7 +2114,6 @@ reinitializeKomorebiBar(hk) {
 #!X::
 stopKomorebi(hk) {
     SGlob.Komorebic("stop --bar --ahk")
-    return
 }
 
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -2156,7 +2128,6 @@ stopKomorebi(hk) {
 !Left::
 focusLeft(hk) {
     SGlob.Komorebic("focus left")
-    return
 }
 
 /**
@@ -2167,7 +2138,6 @@ focusLeft(hk) {
 !Down::
 focusDown(hk) {
     SGlob.Komorebic("focus down")
-    return
 }
 
 /**
@@ -2178,7 +2148,6 @@ focusDown(hk) {
 !Up::
 focusUp(hk) {
     SGlob.Komorebic("focus up")
-    return
 }
 
 /**
@@ -2189,7 +2158,6 @@ focusUp(hk) {
 !Right::
 focusRight(hk) {
     SGlob.Komorebic("focus right")
-    return
 }
 
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -2204,7 +2172,6 @@ focusRight(hk) {
 !+Left::
 moveLeft(hk) {
     SGlob.Komorebic("move left")
-    return
 }
 
 /**
@@ -2215,7 +2182,6 @@ moveLeft(hk) {
 !+Down::
 moveDown(hk) {
     SGlob.Komorebic("move down")
-    return
 }
 
 /**
@@ -2226,7 +2192,6 @@ moveDown(hk) {
 !+Up::
 moveUp(hk) {
     SGlob.Komorebic("move up")
-    return
 }
 
 /**
@@ -2237,7 +2202,6 @@ moveUp(hk) {
 !+Right::
 moveRight(hk) {
     SGlob.Komorebic("move right")
-    return
 }
 
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -2252,7 +2216,6 @@ moveRight(hk) {
 #+Right::
 resizeAxisHorizontalIncrease(hk) {
     SGlob.Komorebic("resize-axis horizontal increase")
-    return
 }
 
 /**
@@ -2263,7 +2226,6 @@ resizeAxisHorizontalIncrease(hk) {
 #+Left::
 resizeAxisHorizontalDecrease(hk) {
     SGlob.Komorebic("resize-axis horizontal decrease")
-    return
 }
 
 /**
@@ -2274,7 +2236,6 @@ resizeAxisHorizontalDecrease(hk) {
 #+Up::
 resizeAxisVerticalIncrease(hk) {
     SGlob.Komorebic("resize-axis vertical increase")
-    return
 }
 
 /**
@@ -2285,7 +2246,6 @@ resizeAxisVerticalIncrease(hk) {
 #+Down::
 resizeAxisVerticalDecrease(hk) {
     SGlob.Komorebic("resize-axis vertical decrease")
-    return
 }
 
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -2300,7 +2260,6 @@ resizeAxisVerticalDecrease(hk) {
 #!Up::
 changeLayoutBsp(hk) {
     SGlob.Komorebic("change-layout bsp")
-    return
 }
 
 /**
@@ -2311,7 +2270,6 @@ changeLayoutBsp(hk) {
 #!Left::
 changeLayoutHorizontalStack(hk) {
     SGlob.Komorebic("change-layout horizontal-stack")
-    return
 }
 
 /**
@@ -2322,7 +2280,6 @@ changeLayoutHorizontalStack(hk) {
 #!Right::
 changeLayoutVerticalStack(hk) {
     SGlob.Komorebic("change-layout vertical-stack")
-    return
 }
 
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -2337,7 +2294,6 @@ changeLayoutVerticalStack(hk) {
 #PgUp::
 flipLayoutHorizontal(hk) {
     SGlob.Komorebic("flip-layout horizontal")
-    return
 }
 
 /**
@@ -2348,111 +2304,6 @@ flipLayoutHorizontal(hk) {
 #PgDn::
 flipLayoutVertical(hk) {
     SGlob.Komorebic("flip-layout vertical")
-    return
-}
-
-; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-; Resize Regular Windows (Win + Shift + Ctrl + ←↑↓→)                          |
-; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-
-/**
- * Resize Regular Active Window (Increase Width)
- * @context Komodo General
- */
-#+^Right::
-resizeRegularActiveWindowIncreaseWidth(hk) {
-    SGlob.SetActiveWindowSize(20, 0)
-    return
-}
-
-/**
- * Resize Regular Active Window (Decrease Width)
- * @context Komodo General
- */
-#+^Left::
-resizeRegularActiveWindowDecreaseWidth(hk) {
-    SGlob.SetActiveWindowSize(-20, 0)
-    return
-}
-
-/**
- * Resize Regular Active Window (Increase Height)
- * @context Komodo General
- */
-#+^Up::
-resizeRegularActiveWindowIncreaseHeight(hk) {
-    SGlob.SetActiveWindowSize(0, 20)
-    return
-}
-
-/**
- * Resize Regular Active Window (Decrease Height)
- * @context Komodo General
- */
-#+^Down::
-resizeRegularActiveWindowDecreaseHeight(hk) {
-    SGlob.SetActiveWindowSize(0, -20)
-    return
-}
-
-; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-; Move Regular Windows (Win + Shift + Alt + ←↑↓→)                             |
-; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-
-/**
- * Move Regular Window (Right)
- * @context Komodo General
- * @keyword move-active-window right
- */
-#+!Right::
-moveRegularWindowRight(hk) {
-    if (SGlob.IsKomoDoAvailable())
-        SGlob.KomoDo("move-active-window 10 0")
-    else
-        SGlob.SetActiveWindowPosition(10, 0)
-    return
-}
-
-/**
- * Move Regular Window (Left)
- * @context Komodo General
- * @keyword move-active-window left
- */
-#+!Left::
-moveRegularWindowLeft(hk) {
-    if (SGlob.IsKomoDoAvailable())
-        SGlob.KomoDo("move-active-window -10 0")
-    else
-        SGlob.SetActiveWindowPosition(-10, 0)
-    return
-}
-
-/**
- * Move Regular Window (Up)
- * @context Komodo General
- * @keyword move-active-window up
- */
-#+!Up::
-moveRegularWindowUp(hk) {
-    if (SGlob.IsKomoDoAvailable())
-        SGlob.KomoDo("move-active-window 0 -10")
-    else
-        SGlob.SetActiveWindowPosition(0, -10)
-    return
-}
-
-/**
- * Move Regular Window (Down)
- * @context Komodo General
- * @keyword move-active-window down
- */
-#+!Down::
-moveRegularWindowDown(hk) {
-    if (SGlob.IsKomoDoAvailable())
-        SGlob.KomoDo("move-active-window 0 10")
-    else
-        SGlob.SetActiveWindowPosition(0, 10)
-    return
 }
 
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -2477,7 +2328,6 @@ stackWindowsLeft(hk) {
 ^#Down::
 stackWindowsDown(hk) {
     SGlob.Komorebic("stack down")
-    return
 }
 
 /**
@@ -2488,7 +2338,6 @@ stackWindowsDown(hk) {
 ^#Up::
 stackWindowsUp(hk) {
     SGlob.Komorebic("stack up")
-    return
 }
 
 /**
@@ -2499,7 +2348,6 @@ stackWindowsUp(hk) {
 ^#Right::
 stackWindowsRight(hk) {
     SGlob.Komorebic("stack right")
-    return
 }
 
 /**
@@ -2510,7 +2358,6 @@ stackWindowsRight(hk) {
 ^#-::
 unstackWindows(hk) {
     SGlob.Komorebic("unstack")
-    return
 }
 
 /**
@@ -2521,7 +2368,6 @@ unstackWindows(hk) {
 ^#,::
 cycleStackPrevious(hk) {
     SGlob.Komorebic("cycle-stack previous")
-    return
 }
 
 /**
@@ -2532,7 +2378,6 @@ cycleStackPrevious(hk) {
 ^#.::
 cycleStackNext(hk) {
     SGlob.Komorebic("cycle-stack next")
-    return
 }
 
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -2547,7 +2392,6 @@ cycleStackNext(hk) {
 #Home::
 cycleMonitorNext(hk) {
     SGlob.Komorebic("cycle-monitor next")
-    return
 }
 
 /**
@@ -2558,7 +2402,6 @@ cycleMonitorNext(hk) {
 #End::
 cycleMonitorPrevious(hk) {
     SGlob.Komorebic("cycle-monitor previous")
-    return
 }
 
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -2573,7 +2416,6 @@ cycleMonitorPrevious(hk) {
 #F1::
 focusMonitor0(hk) {
     SGlob.Komorebic("focus-monitor 0")
-    return
 }
 
 /**
@@ -2584,7 +2426,6 @@ focusMonitor0(hk) {
 #F2::
 focusMonitor1(hk) {
     SGlob.Komorebic("focus-monitor 1")
-    return
 }
 
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -2599,7 +2440,6 @@ focusMonitor1(hk) {
 #+F1::
 sendToMonitor0(hk) {
     SGlob.Komorebic("send-to-monitor 0")
-    return
 }
 
 /**
@@ -2610,7 +2450,6 @@ sendToMonitor0(hk) {
 #+F2::
 sendToMonitor1(hk) {
     SGlob.Komorebic("send-to-monitor 1")
-    return
 }
 
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -2626,7 +2465,6 @@ sendToMonitor1(hk) {
 #+Numpad1::
 sendToWorkspace1(hk) {
     SGlob.CheckWorkspaceAndExecute("move-to-workspace", 0)
-    return
 }
 
 /**
@@ -2638,7 +2476,6 @@ sendToWorkspace1(hk) {
 #+Numpad2::
 sendToWorkspace2(hk) {
     SGlob.CheckWorkspaceAndExecute("move-to-workspace", 1)
-    return
 }
 
 /**
@@ -2650,7 +2487,6 @@ sendToWorkspace2(hk) {
 #+Numpad3::
 sendToWorkspace3(hk) {
     SGlob.CheckWorkspaceAndExecute("move-to-workspace", 2)
-    return
 }
 
 /**
@@ -2662,7 +2498,6 @@ sendToWorkspace3(hk) {
 #+Numpad4::
 sendToWorkspace4(hk) {
     SGlob.CheckWorkspaceAndExecute("move-to-workspace", 3)
-    return
 }
 
 /**
@@ -2674,7 +2509,6 @@ sendToWorkspace4(hk) {
 #+Numpad5::
 sendToWorkspace5(hk) {
     SGlob.CheckWorkspaceAndExecute("move-to-workspace", 4)
-    return
 }
 
 /**
@@ -2686,7 +2520,6 @@ sendToWorkspace5(hk) {
 #+Numpad6::
 sendToWorkspace6(hk) {
     SGlob.CheckWorkspaceAndExecute("move-to-workspace", 5)
-    return
 }
 
 /**
@@ -2698,7 +2531,6 @@ sendToWorkspace6(hk) {
 #+Numpad7::
 sendToWorkspace7(hk) {
     SGlob.CheckWorkspaceAndExecute("move-to-workspace", 6)
-    return
 }
 
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -2714,7 +2546,6 @@ sendToWorkspace7(hk) {
 #Numpad1::
 switchToWorkspace1(hk) {
     SGlob.CheckWorkspaceAndExecute("focus-workspace", 0)
-    return
 }
 
 /**
@@ -2726,7 +2557,6 @@ switchToWorkspace1(hk) {
 #Numpad2::
 switchToWorkspace2(hk) {
     SGlob.CheckWorkspaceAndExecute("focus-workspace", 1)
-    return
 }
 
 /**
@@ -2738,7 +2568,6 @@ switchToWorkspace2(hk) {
 #Numpad3::
 switchToWorkspace3(hk) {
     SGlob.CheckWorkspaceAndExecute("focus-workspace", 2)
-    return
 }
 
 /**
@@ -2750,7 +2579,6 @@ switchToWorkspace3(hk) {
 #Numpad4::
 switchToWorkspace4(hk) {
     SGlob.CheckWorkspaceAndExecute("focus-workspace", 3)
-    return
 }
 
 /**
@@ -2762,7 +2590,6 @@ switchToWorkspace4(hk) {
 #Numpad5::
 switchToWorkspace5(hk) {
     SGlob.CheckWorkspaceAndExecute("focus-workspace", 4)
-    return
 }
 
 /**
@@ -2774,7 +2601,6 @@ switchToWorkspace5(hk) {
 #Numpad6::
 switchToWorkspace6(hk) {
     SGlob.CheckWorkspaceAndExecute("focus-workspace", 5)
-    return
 }
 
 /**
@@ -2786,7 +2612,6 @@ switchToWorkspace6(hk) {
 #Numpad7::
 switchToWorkspace7(hk) {
     SGlob.CheckWorkspaceAndExecute("focus-workspace", 6)
-    return
 }
 
 /* ----------------------------------------------------------------------------

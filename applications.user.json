@@ -1,0 +1,435 @@
+{
+    "$schema": "https://raw.githubusercontent.com/LGUG2Z/komorebi/master/schema.asc.json",
+
+    "AltSnap": {
+        "ignore": [
+            {
+                "id": "AltSnap.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            }
+        ]
+    },
+    "Animal Well": {
+        "ignore": [
+            {
+                "id": "Animal Well.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            }
+        ]
+    },
+    "Auto Hotkey": {
+        "ignore": [
+            {
+                "id": "AutoHotkey.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            },
+            {
+                "id": "AutoHotkey32.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            },
+            {
+                "id": "AutoHotkey64.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            }
+        ]
+    },
+    "BorderlessGaming": {
+        "floating": [
+            {
+                "id": "BorderlessGaming.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            }
+        ]
+    },
+    "Citrix Workspace": {
+        "ignore": [
+            {
+                "id": "Citrix.DesktopViewer.App.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            },
+            {
+                "id": "PrimaryAuthModule.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            }
+        ]
+    },
+    "Clock64": {
+        "ignore": [
+            {
+                "id": "ClockFlyoutWindow",
+                "kind": "Class",
+                "matching_strategy": "Equals"
+            }
+        ]
+    },
+    "Crates.app": {
+        "floating": [
+            {
+                "id": "Crates.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            }
+        ]
+    },
+    "Directory Opus": {
+        "floating": [
+            {
+                "id": "dopus.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            }
+        ],
+        "object_name_change": [
+            {
+                "id": "dopus.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            }
+        ]
+    },
+    "DSXv2": {
+        "ignore": [
+            {
+                "id": "DSX.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            }
+        ]
+    },
+    "Dwarf Fortress": {
+        "floating": [
+            {
+                "id": "Dwarf Fortress.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            }
+        ]
+    },
+    "eM Client": {
+        "floating": [
+            {
+                "id": "MailClient.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            }
+        ],
+        "tray_and_multi_window": [
+            {
+                "id": "MailClient.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            }
+        ]
+    },
+    "Enshrouded": {
+        "ignore": [
+            {
+                "id": "enshrouded.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            }
+        ]
+    },
+    "Environmental Station Alpha": {
+        "ignore": [
+            {
+                "id": "Environmental Station Alpha.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            }
+        ]
+    },
+    "FINAL FANTASY XIV": {
+        "ignore": [
+            {
+                "id": "ffxiv_dx11.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            },
+            {
+                "id": "ffxiv_dx9.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            }
+        ]
+    },
+    "GoXLR App and Control Panel": {
+        "ignore": [
+            {
+                "id": "GoXLR App.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            },
+            {
+                "id": "GoXLRAudioCplApp.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            }
+        ]
+    },
+    "Grabber": {
+        "manage": [
+            [
+                {
+                  "id": "Grabber.exe",
+                  "kind": "Exe",
+                  "matching_strategy": "Equals"
+                },
+                {
+                  "id": "Qt\\d+QWindowIcon",
+                  "kind": "Class",
+                  "matching_strategy": "Regex"
+                },
+                {
+                    "id": "Options - Grabber",
+                    "kind": "Title",
+                    "matching_strategy": "DoesNotEqual"
+                }
+            ]            
+        ]
+    },
+    "mpv": {
+        "floating": [
+            [
+                {
+                    "id": "mpv.exe",
+                    "kind": "Exe",
+                    "matching_strategy": "Equals"
+                },
+                {
+                    "id": "mpv",
+                    "kind": "Class",
+                    "matching_strategy": "Equals"
+                }
+            ]
+        ],
+        "manage": [
+            [
+                {
+                    "id": "mpv.exe",
+                    "kind": "Exe",
+                    "matching_strategy": "Equals"
+                },
+                {
+                    "id": "mpv",
+                    "kind": "Class",
+                    "matching_strategy": "Equals"
+                }
+            ]
+        ]
+    },
+    "OBS Studio": {
+        "floating": [
+            {
+                "id": "obs64.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            }
+        ]
+    },
+    "Qt Messages": {
+        "ignore": [
+            {
+                "id": "Qt\\d+QWindowIcon",
+                "kind": "Class",
+                "matching_strategy": "Regex"
+            }
+        ]
+    },
+    "Qutebrowser": {
+        "manage": [
+            [
+                {
+                    "id": "qutebrowser.exe",
+                    "kind": "Exe",
+                    "matching_strategy": "Equals"
+                },
+                {
+                    "id": "Qt\\d+QWindowIcon",
+                    "kind": "Class",
+                    "matching_strategy": "Regex"
+                }
+            ]
+        ]
+    },
+    "Steam": {
+        "floating": [
+            {
+                "id": "steam.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            },
+            [
+                {
+                    "id": "steamwebhelper.exe",
+                    "kind": "Exe",
+                    "matching_strategy": "Equals"
+                },
+                {
+                    "id": "SDL_app",
+                    "kind": "Class",
+                    "matching_strategy": "Equals"
+                }
+            ]
+        ]
+    },
+    "tacky-borders": {
+        "ignore": [
+            {
+                "id": "tacky-borders.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            }
+        ]
+    },
+    "Tray Runner": {
+        "ignore": [
+            {
+                "id": "TrayRunner.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            }
+        ]
+    },
+    "Turbo Launch": {
+        "ignore": [
+            {
+                "id": "TurboLaunch.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            }
+        ]
+    },
+    "UUU (IGCSClient)": {
+        "ignore": [
+            {
+                "id": "IGCSClient.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            }
+        ]
+    },
+    "Usenet Explorer": {
+        "floating": [
+            [
+                {
+                    "id": "UE.exe",
+                    "kind": "Exe",
+                    "matching_strategy": "Equals"
+                },
+                {
+                    "id": "UsenetExplorerClassDefault",
+                    "kind": "Class",
+                    "matching_strategy": "Contains"
+                }
+            ]
+        ]
+    },
+    "Vivaldi": {
+        "tray_and_multi_window": [
+            {
+                "id": "vivaldi.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            }
+        ],
+        "manage": [
+            [
+                {
+                    "id": "vivaldi.exe",
+                    "kind": "Exe",
+                    "matching_strategy": "Equals"
+                },
+                {
+                    "id": "Chrome_WidgetWin_(.*)",
+                    "kind": "Class",
+                    "matching_strategy": "Regex"
+                }
+            ]
+        ],
+        "floating": [
+            [
+                {
+                    "id": "vivaldi.exe",
+                    "kind": "Exe",
+                    "matching_strategy": "Equals"
+                },
+                {
+                    "id": "Vivaldi Settings: (.*) - Vivaldi",
+                    "kind": "Title",
+                    "matching_strategy": "Regex"
+                }
+            ]
+        ]
+    },
+    "VLC": {
+        "manage": [
+            [
+                {
+                    "id": "vlc.exe",
+                    "kind": "Exe",
+                    "matching_strategy": "Equals"
+                },
+                {
+                    "id": "Qt\\d+QWindowIcon",
+                    "kind": "Class",
+                    "matching_strategy": "Regex"
+                }
+            ]
+        ],
+        "slow_application": [
+            [
+                {
+                    "id": "vlc.exe",
+                    "kind": "Exe",
+                    "matching_strategy": "Equals"
+                },
+                {
+                    "id": "Qt\\d+QWindowIcon",
+                    "kind": "Class",
+                    "matching_strategy": "Regex"
+                }
+            ]
+        ]
+    },
+    "Wavebox": {
+        "floating": [
+            {
+                "id": "Wavebox.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            }
+        ],
+        "object_name_change": [
+            {
+                "id": "Wavebox.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            }
+        ],
+        "tray_and_multi_window": [
+            {
+                "id": "Wavebox.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            }
+        ]
+    },
+    "XIV Launcher": {
+        "ignore": [
+            {
+                "id": "XIVLauncher.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            }
+        ]
+    }
+}

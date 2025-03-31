@@ -1,5 +1,5 @@
 diff --git a/komorebi/src/process_event.rs b/komorebi/src/process_event.rs
-index bb34ed3..298d6d8 100644
+index 2f8447f..3a1107f 100644
 --- a/komorebi/src/process_event.rs
 +++ b/komorebi/src/process_event.rs
 @@ -395,19 +395,8 @@ impl WindowManager {
@@ -13,7 +13,7 @@ index bb34ed3..298d6d8 100644
 -                                    matches!(workspace.layer, WorkspaceLayer::Floating)
 -                                        && !should_float
 -                                        && workspace.tile;
-                                 workspace.floating_windows_mut().push(window);
+                                 workspace.floating_windows_mut().push_back(window);
                                  workspace.set_layer(WorkspaceLayer::Floating);
 -                                if center_spawned_floats {
 -                                    let mut floating_window = window;

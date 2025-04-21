@@ -7,4 +7,6 @@ These patches undo changes that I view as detrimental to my user experience.
   Resizing and centering floating windows is a direct violation of their intended use case
   and changes the long-standing default behaviour - something Komorebi is usually prone to not do.
 
-  The desperate effort not to create any new options leads to a worse user experience.
+  2025-04-21: Patch is no longer necessary, starting with commit 86e78570d6db382fb04742f17eea8da4a97acff2
+              the behaviour is finally configurable.
+

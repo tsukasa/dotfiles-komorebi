@@ -1,0 +1,15 @@
+diff --git a/komorebi/src/core/arrangement.rs b/komorebi/src/core/arrangement.rs
+index 360336e..3e25144 100644
+--- a/komorebi/src/core/arrangement.rs
++++ b/komorebi/src/core/arrangement.rs
+@@ -53,8 +53,8 @@ impl Arrangement for DefaultLayout {
+                 let mut layouts = Vec::with_capacity(len);
+ 
+                 match len {
+-                    // treat < 3 windows the same as the columns layout
+-                    len if len < 3 => {
++                    // treat <= column_count windows the same as the columns layout
++                    len if len <= column_count => {
+                         layouts = columns(area, len);
+ 
+                         let adjustment = calculate_columns_adjustment(resize_dimensions);

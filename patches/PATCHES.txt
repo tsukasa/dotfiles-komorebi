@@ -1,4 +1,4 @@
-These patches undo changes that I view as detrimental to my user experience.
+These patches undo changes or alter behaviours that I view as detrimental to my user experience.
 
 001_floating_no_center_window.patch
 - Undoes b6bd191cf5bf12231edcb5d8c14ad9994d1dcc97 (https://github.com/LGUG2Z/komorebi/commit/b6bd191cf5bf12231edcb5d8c14ad9994d1dcc97)
@@ -10,3 +10,12 @@ These patches undo changes that I view as detrimental to my user experience.
   2025-04-21: Patch is no longer necessary, starting with commit 86e78570d6db382fb04742f17eea8da4a97acff2
               the behaviour is finally configurable.
 
+002_scrolling_adjust_min_windows.patch
+- Adjust the way the new Scrolling window layout (https://github.com/LGUG2Z/komorebi/commit/b4e61b079cb60f04b8fcf0d7203419ad083528f4)
+  handles the minimum number of windows before scrolling.
+
+  By default, Komorebi treats 2 windows or less as the columns layout, despite there being
+  a configuration entry for the number of windows.
+
+  This patch replaces the hardcoded default with the configurable number from the configuration
+  layout_options, which allow per-workspace configuration of this parameter.

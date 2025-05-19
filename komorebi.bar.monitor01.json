@@ -1,0 +1,132 @@
+{
+  "$schema": "https://raw.githubusercontent.com/LGUG2Z/komorebi/refs/heads/master/schema.bar.json",
+
+  "monitor": {
+    "index": 1,
+    "work_area_offset": {
+      "left": 0,
+      // Would be 32 without AppBar registration!
+      "top": 0,
+      "right": 0,
+      // Would be 32 without AppBar registration!
+      "bottom": 0
+    }
+  },
+
+  "position": {
+    "start": {
+      "x": 1920,
+      "y": 0
+    },
+    "end": {
+      "x": 1920,
+      "y": 32
+    }
+  },
+  
+  "font_family": "MonoLisa Variable Regular",
+  "font_size": 13,
+
+  "max_label_width": 350,
+  
+  "theme": {
+    "palette": "Catppuccin",
+    "name": "Mocha",
+    "accent": "Peach"
+  },
+
+  "transparency_alpha": 235,
+
+  "left_widgets": [
+    {
+      "Komorebi": {
+        "workspaces": {
+          "enable": true,
+          "display": "Text",
+          "hide_empty_workspaces": false
+        },
+        "layout": {
+          "enable": true,
+          "display": "Icon",
+          "options": [
+            "BSP",
+            "VerticalStack",
+            "RightMainVerticalStack",
+            "HorizontalStack",
+            "Columns",
+            "Rows",
+            "Scrolling"
+          ]
+        },
+        "workspace_layer": {
+          "enable": true,
+          "show_icon": true,
+          "show_when_tiling": true,
+          "display": "Icon"
+        },
+        "focused_window": {
+          "enable": false,
+          "show_icon": true,
+          "display": "IconAndText"
+        }
+      }
+    }
+  ],
+  "center_widgets": [
+    {
+      "Komorebi": {
+        "focused_window": {
+          "enable": true,
+          "show_icon": true,
+          "display": "IconAndText"
+        }
+      }
+    }
+  ],
+  "right_widgets": [
+    {
+      "Media": {
+        "enable": false
+      }
+    },
+    {
+      "Storage": {
+        "enable": false
+      }
+    },
+    {
+      "Memory": {
+        "enable": false
+      }
+    },
+    {
+      "Network": {
+        "enable": false,
+        "show_total_data_transmitted": true,
+        "show_network_activity": true
+      }
+    },
+    {
+      "Date": {
+        "enable": true,
+        "format": {
+          "Custom": "%a, %Y-%m-%d"
+        }
+      }
+    },
+    {
+      "Time": {
+        "changing_icon": true,
+        "enable": true,
+        "format": {
+          "Custom": "%H:%M:%S"
+        }
+      }
+    },
+    {
+      "Battery": {
+        "enable": false
+      }
+    }
+  ]
+}

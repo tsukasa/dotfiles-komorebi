@@ -1,0 +1,283 @@
+{
+  "$schema": "https://raw.githubusercontent.com/LGUG2Z/komorebi/refs/heads/master/schema.json",
+  
+  "animation": {
+    "duration": 250,
+    "enabled": true,
+    "fps": 60,
+    "style": "EaseInQuad"
+  },
+
+  "app_specific_configuration_path": [
+    "$Env:KOMOREBI_CONFIG_HOME/applications.json",
+    "$Env:KOMOREBI_CONFIG_HOME/applications.user.json"
+  ],
+  
+  "bar_configurations": [
+    "$Env:KOMOREBI_CONFIG_HOME/komorebi.bar.monitor00.json",
+    "$Env:KOMOREBI_CONFIG_HOME/komorebi.bar.monitor01.json"
+  ],
+
+  "border": false,
+  "border_implementation": "Komorebi",
+  "border_offset": -1,
+  "border_style": "System",
+  "border_width": 5,
+
+  "cross_boundary_behaviour": "Monitor",
+  "cross_monitor_move_behaviour": "Swap",
+
+  "default_container_padding": 3,
+  "default_workspace_padding": 3,
+
+  // Get the informations via "komorebic monitor-information"
+  // Be sure to check the "left" property to see which one is which...
+  "display_index_preferences": {
+    "0": "DELA0A2-5&2da744da&0&UID184852",
+    "1": "DELA0A2-5&2da744da&0&UID184854"
+  },
+
+  "toggle_float_placement": "None",
+  "float_override": false,
+  "floating_layer_behaviour": "Float",
+  "float_override_placement": "None",
+  "floating_layer_placement": "None",
+  "floating_window_aspect_ratio": "Widescreen",
+
+  "monitors": [
+    {
+      "workspaces": [
+        {
+          "name": "一",
+          "layout": "VerticalStack",
+          "apply_window_based_work_area_offset": true,
+          "window_container_behaviour": "Create",
+          "float_override": true,
+          "floating_layer_behaviour": "Float",
+          "layout_options": {
+            "scrolling": {
+              "columns": 2
+            }
+          },
+        },
+        {
+          "name": "二",
+          "layout": "VerticalStack",
+          "apply_window_based_work_area_offset": true,
+          "window_container_behaviour": "Create",
+          "float_override": true,
+          "floating_layer_behaviour": "Float",
+          "layout_options": {
+            "scrolling": {
+              "columns": 2
+            }
+          },
+          "initial_workspace_rules": [
+            {
+              "id": "steam.exe",
+              "kind": "Exe",
+              "matching_strategy": "Equals"
+            }
+          ]
+        },
+        {
+          "name": "三",
+          "layout": "VerticalStack",
+          "apply_window_based_work_area_offset": true,
+          "window_container_behaviour": "Create",
+          "float_override": false,
+          "floating_layer_behaviour": "Float",
+          "layout_options": {
+            "scrolling": {
+              "columns": 2
+            }
+          },
+        },
+        {
+          "name": "四",
+          "layout": "VerticalStack",
+          "apply_window_based_work_area_offset": true,
+          "window_container_behaviour": "Append",
+          "float_override": false,
+          "floating_layer_behaviour": "Float",
+          "layout_options": {
+            "scrolling": {
+              "columns": 2
+            }
+          },
+          "initial_workspace_rules": [
+          ]
+        },
+        {
+          "name": "五",
+          "layout": "VerticalStack",
+          "apply_window_based_work_area_offset": true,
+          "window_container_behaviour": "Append",
+          "float_override": false,
+          "floating_layer_behaviour": "Float",
+          "layout_options": {
+            "scrolling": {
+              "columns": 2
+            }
+          },
+          "initial_workspace_rules": [
+            // Vivaldi
+            {
+              "id": "vivaldi.exe",
+              "kind": "Exe",
+              "matching_strategy": "Equals"
+            }
+          ]
+        },
+        {
+          "name": "六",
+          "layout": "VerticalStack",
+          "apply_window_based_work_area_offset": true,
+          "window_container_behaviour": "Append",
+          "float_override": false,
+          "floating_layer_behaviour": "Float",
+          "layout_options": {
+            "scrolling": {
+              "columns": 2
+            }
+          },
+          "initial_workspace_rules": [
+            // Visual Studio Code
+            {
+              "id": "Code.exe",
+              "kind": "Exe",
+              "matching_strategy": "Equals"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "workspaces": [
+        {
+          "name": "一",
+          "layout": "VerticalStack",
+          "apply_window_based_work_area_offset": true,
+          "window_container_behaviour": "Create",
+          "float_override": true,
+          "floating_layer_behaviour": "Float",
+          "layout_options": {
+            "scrolling": {
+              "columns": 2
+            }
+          },
+        },
+        {
+          "name": "二",
+          "layout": "VerticalStack",
+          "apply_window_based_work_area_offset": true,
+          "window_container_behaviour": "Create",
+          "float_override": true,
+          "floating_layer_behaviour": "Float",
+          "layout_options": {
+            "scrolling": {
+              "columns": 2
+            }
+          }
+        },
+        {
+          "name": "三",
+          "layout": "VerticalStack",
+          "apply_window_based_work_area_offset": true,
+          "window_container_behaviour": "Create",
+          "float_override": false,
+          "floating_layer_behaviour": "Float",
+          "layout_options": {
+            "scrolling": {
+              "columns": 2
+            }
+          }
+        },
+        {
+          "name": "四",
+          "layout": "VerticalStack",
+          "apply_window_based_work_area_offset": true,
+          "window_container_behaviour": "Create",
+          "float_override": false,
+          "floating_layer_behaviour": "Float",
+          "layout_options": {
+            "scrolling": {
+              "columns": 2
+            }
+          }
+        },
+        {
+          "name": "五",
+          "layout": "VerticalStack",
+          "apply_window_based_work_area_offset": true,
+          "window_container_behaviour": "Create",
+          "float_override": false,
+          "floating_layer_behaviour": "Float",
+          "layout_options": {
+            "scrolling": {
+              "columns": 2
+            }
+          }
+        },
+        {
+          "name": "六",
+          "layout": "VerticalStack",
+          "apply_window_based_work_area_offset": true,
+          "window_container_behaviour": "Create",
+          "float_override": false,
+          "floating_layer_behaviour": "Float",
+          "layout_options": {
+            "scrolling": {
+              "columns": 2
+            }
+          }
+        }
+      ]
+    }
+  ],
+
+  // Without m_f_f, switching workspaces happens on the monitor where the mouse is.
+  "mouse_follows_focus": true,
+  
+  "resize_delta": 50,
+  
+  "slow_application_compensation_time": 100,
+
+  // Disable stackbar by setting "mode" to "Never".
+  // komorebi-bar shows the members of the stack in the bar.
+  "stackbar": {
+    "height": 24,
+    "label": "Title",
+    "mode": "Never",
+    "tabs": {
+      "font_family": "MonoLisa Variable",
+      "font_size": 16,
+      "width": 200
+    }
+  },
+
+  "theme": {
+    "palette": "Catppuccin",
+    "name": "Mocha",
+
+    "bar_accent": "Peach",
+    "floating_border": "Blue",
+    "monocle_border": "Red",
+    "single_border": "Peach",
+    "stack_border": "Green",
+    "stackbar_background": "Crust",
+    "stackbar_focused_text": "Peach",
+    "stackbar_unfocused_text": "Overlay1",
+    "unfocused_border": "Mantle"
+  },
+
+  "transparency": false,
+  "transparency_alpha": 230,
+
+  "unmanaged_window_operation_behaviour": "Op",
+
+  // Automatically stack group new windows onto the existing window.
+  "window_container_behaviour": "Append",
+
+  "window_hiding_behaviour": "Cloak"
+}

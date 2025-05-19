@@ -79,6 +79,15 @@
             }
         ]
     },
+    "Daemon Tools Ultra": {
+        "floating": [
+            {
+                "id": "DTUltra.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            }
+        ]
+    },
     "Directory Opus": {
         "floating": [
             {
@@ -147,6 +156,20 @@
             }
         ]
     },
+    "Far Manager": {
+        "floating": [
+            {
+                "id": "far.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            },
+            {
+                "id": "ConsoleWindowClass",
+                "kind": "Class",
+                "matching_strategy": "Equals"
+            }
+        ]
+    },
     "FINAL FANTASY XIV": {
         "ignore": [
             {
@@ -193,7 +216,7 @@
                     "kind": "Title",
                     "matching_strategy": "DoesNotEqual"
                 }
-            ]            
+            ]
         ]
     },
     "mpv": {
@@ -338,36 +361,8 @@
             {
                 "id": "vivaldi.exe",
                 "kind": "Exe",
-                "matching_strategy": "Equals"
+                "matching_strategy": "Legacy"
             }
-        ],
-        "manage": [
-            [
-                {
-                    "id": "vivaldi.exe",
-                    "kind": "Exe",
-                    "matching_strategy": "Equals"
-                },
-                {
-                    "id": "Chrome_WidgetWin_(.*)",
-                    "kind": "Class",
-                    "matching_strategy": "Regex"
-                }
-            ]
-        ],
-        "floating": [
-            [
-                {
-                    "id": "vivaldi.exe",
-                    "kind": "Exe",
-                    "matching_strategy": "Equals"
-                },
-                {
-                    "id": "Vivaldi Settings: (.*) - Vivaldi",
-                    "kind": "Title",
-                    "matching_strategy": "Regex"
-                }
-            ]
         ]
     },
     "VLC": {

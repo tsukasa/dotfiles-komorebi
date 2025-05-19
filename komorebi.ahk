@@ -2123,9 +2123,10 @@ stopKomorebi(hk) {
 /**
  * Change the Focused Window (Left)
  * @context Komorebi
- * @keyword focus left
+ * @keyword focus left scroll left
  */
 !Left::
+#!WheelUp::
 focusLeft(hk) {
     SGlob.Komorebic("focus left")
 }
@@ -2153,9 +2154,10 @@ focusUp(hk) {
 /**
  * Change the Focused Window (Right)
  * @context Komorebi
- * @keyword focus right
+ * @keyword focus right scroll right
  */
 !Right::
+#!WheelDown::
 focusRight(hk) {
     SGlob.Komorebic("focus right")
 }
@@ -2246,6 +2248,30 @@ resizeAxisVerticalIncrease(hk) {
 #+Down::
 resizeAxisVerticalDecrease(hk) {
     SGlob.Komorebic("resize-axis vertical decrease")
+}
+
+; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+; Cycle through the Workspace (Win + MWheelUp/MWheelDown)                     |
+; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+/**
+ * Cycle Workspace (Previous)
+ * @context Komorebi
+ * @keyword cycle-workspace previous
+ */
+#WheelUp::
+cycleWorkspacePrevious(hk) {
+    SGlob.Komorebic("cycle-workspace previous")
+}
+
+/**
+ * Cycle Workspace (Next)
+ * @context Komorebi
+ * @keyword cycle-workspace next
+ */
+#WheelDown::
+cycleWorkspaceNext(hk) {
+    SGlob.Komorebic("cycle-workspace next")
 }
 
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -

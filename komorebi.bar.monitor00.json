@@ -142,7 +142,7 @@
     },
     {
       "Time": {
-        "changing_icon": true,
+        "changing_icon": false,
         "enable": true,
         "format": {
           "Custom": "%H:%M:%S"

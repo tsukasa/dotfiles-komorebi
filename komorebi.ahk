@@ -37,9 +37,22 @@ Class SGlob {
     static IniFilePath := Format("{}\komorebi-ahk.ini", A_ScriptDir)
 
     /**
+     * Holds the list of ignored processes that should not be managed by Komorebi.
+     * This is read from the ini file and can be modified by the user.
+     * @type {String[]}
+     */
+    static IgnoredProcesses := SGlob.GetIgnoredProcesses()
+
+    /**
      * Queue of the PIDs of the Komorebi Bar processes that need to be touched.
      */
     static KomorebiBarTouchConfigQueue := []
+
+    /**
+     * Name of the pipe used for communication with Komorebi.
+     * @type {String}
+     */
+    static KomorebiPipeName := SGlob.ReadIniValue("Settings", "ListenerPipeName", "komorebi-ahk")
 
     /**
      * Map to store the start time of the monitor bar processes
@@ -53,6 +66,13 @@ Class SGlob {
      * @type {Map}
      */
     static MonitorWorkArea := Map()
+
+    /**
+     * No Bar Mode
+     * Disables certain komorebi-bar specific features.
+     * @type {Boolean}
+     */
+    static NoBarMode := SGlob.ReadIniValue("Settings", "NoBarMode", "false") == "true"
 
     /**
      * Artifically limit the number of workspaces without having to
@@ -155,6 +175,29 @@ Class SGlob {
     }
 
     /**
+     * Fills the ignored processes group with the processes from the ini file.
+     * This is called once at script startup to ensure the group is populated.
+     */
+    static FillIgnoredProcessesGroup() {
+        if (SGlob.IgnoredProcesses.Length > 0)
+        {
+            for i, process in SGlob.IgnoredProcesses
+            {
+                GroupAdd("KomoIgnoreProcesses", "ahk_exe " . process)
+                OutputDebug("Added ignored process: " . process)
+            }
+        }
+    }
+
+    /**
+     * Focuses the desktop window as a workaround for focus issues
+     * with Raycast.
+     */
+    static FocusDesktopWorkaround() {
+        WinActivate("ahk_class Progman")
+    }
+
+    /**
      * Get the current monitor based on the mouse cursor position
      * This method retrieves the coordinates of the mouse cursor and determines which monitor it is on.
      * @returns {Object} The monitor index and work area dimensions
@@ -164,6 +207,24 @@ Class SGlob {
         MouseGetPos(&mx, &my)
         CoordMode("Mouse", oldValue)
         return SGlob.GetMonitorOfWindow(mx, my)
+    }
+
+    /**
+     * Reads the ignored processes from the ini file.
+     * @returns {String[]} An array of ignored process names
+     */
+    static GetIgnoredProcesses() {
+        ignoredProcesses := []
+        index := 0
+        loop
+        {
+            value := SGlob.ReadIniValue("IgnoreProcesses", "Ignore" . index, "")
+            if (value = "" || value = "ERROR")
+                break
+            ignoredProcesses.Push(value)
+            index++
+        }
+        return ignoredProcesses
     }
 
     /**
@@ -351,6 +412,31 @@ Class SGlob {
     }
 
     /**
+     * Function to kill applications specified in the ini file under the AutoKillApplications section.
+     */
+    static KillApplications() {
+        if (!FileExist(SGlob.IniFilePath))
+            return
+
+        content := IniRead(SGlob.IniFilePath, "AutoKillApplications")
+
+        loop parse, content, "`n", "`r" {
+            if (InStr(A_LoopField, "=")) {
+                keyValuePair := StrSplit(A_LoopField, "=", , 2)
+                applicationExecutable := keyValuePair[2]
+                applicationExecutable := StrReplace(applicationExecutable, "`"")
+
+                if (ProcessExist(applicationExecutable)) {
+                    OutputDebug("Attempting to kill application: " . applicationExecutable)
+                    ProcessClose(applicationExecutable)
+                } else {
+                    OutputDebug("No process found to kill, skipping: " . applicationExecutable)
+                }
+            }
+        }
+    }
+
+    /**
      * Execute commands on KomoDo
      * @param {String[]} cmd KomoDo command to execute
      */
@@ -485,6 +571,9 @@ Class SGlob {
      * Registers all Komorebi Bar processes as AppBars.
      */
     static RegisterKomorebiBarsAsAppBars() {
+        if (SGlob.NoBarMode)
+            return
+
         ; Wait for the Komorebi Bar processes to start
         ProcessWait("komorebi-bar.exe", 10)
 
@@ -574,8 +663,16 @@ Class SGlob {
     static RunDefaultApplication(appName) {
         appPath := SGlob.ReadIniValue("DefaultApplications", appName, "")
         appPath := SGlob.ResolveEnvironmentVariables(appPath)
-        if (FileExist(appPath))
-            Run(appPath)
+        appArgs := SGlob.ReadIniValue("DefaultApplications", appName . "Args", "")
+        appArgs := SGlob.ResolveEnvironmentVariables(appArgs)
+        if (FileExist(appPath)) {
+            appPathWithArgs := appPath
+
+            if appArgs != ""
+                appPathWithArgs := Format("{} {}", appPath, appArgs)
+
+            Run(appPathWithArgs)
+        }
     }
 
     /**
@@ -584,6 +681,9 @@ Class SGlob {
      * If a monitor is not connected and the bar is running, it will be closed.
      */
     static RunOrKillKomorebiBarOnDisplayChange() {
+        if (SGlob.NoBarMode)
+            return
+
         barConfigPattern := SGlob.ReadIniValue("Settings", "KomorebiBarConfigPattern", "komorebi.bar.monitor{:02}.json")
         barLaunchWait := SGlob.ReadIniValue("Settings", "KomorebiBarLaunchWait", 2000)
 
@@ -721,6 +821,9 @@ Class SGlob {
      * @param {Integer} pidToWaitFor The process ID to wait for before touching the configuration
      */
     static TouchKomorebiBarConfig(pidToWaitFor := -1) {
+        if (SGlob.NoBarMode)
+            return
+
         ; It would be nicer to grab the PID and use WinExist or WinWait
         ; with ahk_oud, however this approach does not work with
         ; Scoop's shim executables.
@@ -762,6 +865,35 @@ Class SGlob {
                 Format("{}\komorebi.json", A_ScriptDir)
             )
         }
+    }
+
+    /**
+     * Updates the AltSnap blacklist with the processes from the ignored processes group.
+     */
+    static UpdateAltSnapBlacklistProcesses() {
+        altSnapIniFile := SGlob.ResolveEnvironmentVariables(SGlob.ReadIniValue("Settings", "AltSnapIniFilePath", ""))
+
+        if (!FileExist(altSnapIniFile))
+            return
+
+        if (!SGlob.ReadIniValue("Settings", "UpdateAltSnapBlacklist", "false") == "true")
+            return
+
+        currentBlacklist := IniRead(altSnapIniFile, "Blacklist", "Processes", "")
+
+        for process in SGlob.IgnoredProcesses
+        {
+            if !InStr(currentBlacklist, process)
+            {
+                if (currentBlacklist != "")
+                    currentBlacklist .= ","
+                currentBlacklist .= process
+            }
+        }
+
+        currentBlacklist := Sort(currentBlacklist, "C0 D,")
+
+        IniWrite(currentBlacklist, altSnapIniFile, "Blacklist", "Processes")
     }
 }
 
@@ -1004,6 +1136,15 @@ Class HotkeyListHelper {
     }
 
     /**
+     * Determines whether a given input is a function.
+     * @param {Func} fn Pointer to a function
+     * @returns {Boolean} True if the input is a function, false otherwise
+     */
+    IsFunc(fn?) {
+        return (IsSet(fn) && HasMethod(fn))
+    }
+
+    /**
      * Joins an array of string elements with a delimiter
      * @param {String[]} arr Array of string elements to join
      * @param {String} delimiter The delimiter to use between elements
@@ -1180,7 +1321,7 @@ Class HotkeyListHelper {
                 }
             }
             
-            if (!ignore) {
+            if (!ignore && this.IsFunc(%hotkeyMatch.functionName%?)) {
                 this.hotkeys.Push({
                     rawhotkey: hotkeyMatch.hotkey,
                     hotkey: this.FormatHotkeyName(Trim(hotkeyMatch.hotkey)),
@@ -1288,6 +1429,364 @@ Class HotkeyListHelper {
             }
         }
     }
+}
+
+/**
+ * Class to manage a named pipe listener for inter-process communication
+ * Creates a named pipe and then listens for incoming connections and messages.
+ * Non-blocking (hopefully)
+ */
+Class PipeListener {
+    /**
+     * Creates a new instance of the PipeListener class.
+     * @param {String} pipeName The name of the pipe to create and listen on.
+     * @param {Number} pollMs The interval in milliseconds to poll for new messages when a client is connected.
+     * @param {Number} bufSize The size of the buffer to use when reading messages from the pipe.
+     */
+	__New(pipeName, pollMs := 25, bufSize := 4096) {
+		this.PipeName := pipeName
+		this.PollMs := pollMs
+		this.IdlePollMs := 200
+		this.BufSize := bufSize
+		this.Handle := 0
+		this._ovl := 0
+		this._connectEvent := 0
+		this._connecting := false
+		this._connected := false
+		this._readBuf := Buffer(bufSize, 0)
+		this._timerInterval := 0
+		this.OnMessage := (msg, bytesRead) => OutputDebug("Received (" . bytesRead . " bytes): " . msg)
+	}
+
+    /**
+     * Starts the pipe listener by creating the named pipe and setting up a timer to poll for connections and messages.
+     */
+	Start() {
+		this.Handle := this._CreateInboundPipe(this.PipeName)
+		this._connected := false
+		this._connecting := true
+		OutputDebug(Format("[PipeListener] Waiting for client on {}...", this.PipeName))
+		this._ConnectPipeNonBlocking(this.Handle)
+		this._timer := ObjBindMethod(this, "_Tick")
+		this._SetTimerInterval(this.IdlePollMs)
+	}
+
+    /**
+     * Stops the pipe listener by closing the pipe handle and stopping the timer.
+     */
+	Stop() {
+		if (this._timer) {
+			SetTimer this._timer, 0
+			this._timer := 0
+		}
+		this._ClosePipe(this.Handle)
+		this.Handle := 0
+	}
+
+    /**
+     * Internal method that is called on each timer tick to check for new
+     * connections and read messages from the pipe.
+     * If a client is not yet connected, it checks for a new connection.
+     */
+	_Tick() {
+		if (this._connecting && !this._connected) {
+			if !this._CheckConnected() {
+				return
+			}
+			OutputDebug("[PipeListener] Client connected. Listening for data...")
+			this._SetTimerInterval(this.PollMs)
+		}
+
+		if !this._connected {
+			return
+		}
+
+		msg := ""
+		bytesRead := 0
+		status := this._ReadPipeMessageNonBlocking(this.Handle, this.BufSize, &msg, &bytesRead)
+		if (status = 0) {
+			OutputDebug("[PipeListener] Pipe closed by client.")
+			this.Stop()
+			ExitApp
+		}
+		if (status < 0) {
+			this._Fail("[PipeListener] ReadFile failed. Error: " . (-status))
+		}
+		if (bytesRead > 0) {
+			cb := this.OnMessage
+			if (IsObject(cb)) {
+				if (cb.MaxParams >= 2) {
+					cb.Call(msg, bytesRead)
+				} else {
+					cb.Call(msg)
+				}
+			}
+		}
+	}
+
+    /**
+     * Internal method to create a named pipe for inbound communication.
+     * @param {String} name The name of the pipe to create.
+     */
+	_CreateInboundPipe(name) {
+		; Inbound, message mode, blocking mode.
+		PIPE_ACCESS_INBOUND := 0x00000001
+		FILE_FLAG_OVERLAPPED := 0x40000000
+		PIPE_TYPE_MESSAGE := 0x00000004
+		PIPE_READMODE_MESSAGE := 0x00000002
+		PIPE_WAIT := 0x00000000
+		PIPE_UNLIMITED_INSTANCES := 255
+
+		handle := DllCall(
+			"CreateNamedPipe",
+			"str", name,
+			"uint", PIPE_ACCESS_INBOUND | FILE_FLAG_OVERLAPPED,
+			"uint", PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE | PIPE_WAIT,
+			"uint", PIPE_UNLIMITED_INSTANCES,
+			"uint", 0,
+			"uint", this.BufSize,
+			"uint", 0,
+			"ptr", 0,
+			"ptr"
+		)
+
+		if (handle = -1) {
+			err := DllCall("GetLastError", "uint")
+			this._Fail("[PipeListener] CreateNamedPipe failed. Error: " . err)
+		}
+
+		OnExit(*) => this._ClosePipe(handle)
+		return handle
+	}
+
+    /**
+     * Internal method to adjust the timer interval for polling the pipe.
+     * @param {Integer} ms The interval in milliseconds to set for the timer.
+     */
+	_SetTimerInterval(ms) {
+		if (this._timerInterval = ms) {
+			return
+		}
+		SetTimer this._timer, ms
+		this._timerInterval := ms
+	}
+
+    /**
+     * Internal method to start an overlapped connect to avoid blocking the main thread.
+     * @param {Ptr} handle The handle to the named pipe.
+     */
+	_ConnectPipeNonBlocking(handle) {
+		; Start an overlapped connect to avoid blocking the main thread.
+		ERROR_PIPE_CONNECTED := 535
+		ERROR_IO_PENDING := 997
+
+		this._connectEvent := DllCall("CreateEvent", "ptr", 0, "int", 1, "int", 0, "ptr", 0, "ptr")
+		this._ovl := Buffer(A_PtrSize = 8 ? 32 : 20, 0)
+		eventOffset := (A_PtrSize = 8) ? 24 : 16
+		NumPut("ptr", this._connectEvent, this._ovl, eventOffset)
+
+		if DllCall("ConnectNamedPipe", "ptr", handle, "ptr", this._ovl) {
+			this._connected := true
+			this._connecting := false
+			return
+		}
+
+		err := DllCall("GetLastError", "uint")
+		if (err = ERROR_PIPE_CONNECTED) {
+			this._connected := true
+			this._connecting := false
+			return
+		}
+		if (err != ERROR_IO_PENDING) {
+			this._Fail("ConnectNamedPipe failed. Error: " . err)
+		}
+	}
+
+    /**
+     * Internal method to check if the overlapped connection has completed and update the connection state accordingly.
+     * @return {Boolean} True if the connection is established, false otherwise.
+     */
+	_CheckConnected() {
+		; Poll overlapped connection completion.
+		WAIT_OBJECT_0 := 0
+		WAIT_TIMEOUT := 258
+		ERROR_IO_INCOMPLETE := 996
+
+		if !this._connectEvent {
+			return false
+		}
+
+		wait := DllCall("WaitForSingleObject", "ptr", this._connectEvent, "uint", 0, "uint")
+        
+		if (wait = WAIT_TIMEOUT) {
+			return false
+		}
+		if (wait != WAIT_OBJECT_0) {
+			this._Fail("WaitForSingleObject failed. Error: " DllCall("GetLastError", "uint"))
+		}
+
+		bytes := 0
+		if !DllCall("GetOverlappedResult", "ptr", this.Handle, "ptr", this._ovl, "uint*", &bytes, "int", 0) {
+			err := DllCall("GetLastError", "uint")
+			if (err = ERROR_IO_INCOMPLETE) {
+				return false
+			}
+			this._Fail("GetOverlappedResult failed. Error: " . err)
+		}
+
+		this._connected := true
+		this._connecting := false
+		return true
+	}
+
+    /**
+     * Internal method to read a complete message from the pipe, handling cases where the message may be larger than the buffer size and ensuring that messages are not split across reads.
+     * @param {Ptr} handle The handle to the named pipe to read from.
+     * @param {Integer} bufSize The size of the buffer to use for each read operation.
+     * @param {Ref} message A reference variable to store the complete message read from the pipe.
+     * @param {Ref} bytesRead A reference variable to store the total number of bytes read from the pipe.
+     * @return {Integer} 1 if the message was read successfully, 0 if the pipe was closed by the client, or a negative error code if an error occurred.
+     */
+	_ReadPipeMessage(handle, bufSize, &message, &bytesRead) {
+		; Collect an entire message to avoid splitting output across reads.
+		ERROR_MORE_DATA := 234
+		ERROR_BROKEN_PIPE := 109
+
+		buf := this._readBuf
+		if (buf.Size != bufSize) {
+			buf := Buffer(bufSize, 0)
+			this._readBuf := buf
+		}
+		chunks := []
+		total := 0
+
+		loop {
+			readNow := 0
+			ok := DllCall("ReadFile", "ptr", handle, "ptr", buf, "uint", bufSize, "uint*", &readNow, "ptr", 0)
+			if !ok {
+				err := DllCall("GetLastError", "uint")
+				if (err = ERROR_BROKEN_PIPE) {
+					return 0
+				}
+				if (err != ERROR_MORE_DATA) {
+					return -err
+				}
+			}
+
+			if (readNow > 0) {
+				chunk := Buffer(readNow, 0)
+				DllCall("RtlMoveMemory", "ptr", chunk, "ptr", buf, "uptr", readNow)
+				chunks.Push(chunk)
+				total += readNow
+			}
+
+			if ok {
+				break
+			}
+		}
+
+		bytesRead := total
+		if (total = 0) {
+			message := ""
+			return 1
+		}
+
+		msgBuf := Buffer(total, 0)
+		offset := 0
+		for chunk in chunks {
+			DllCall("RtlMoveMemory", "ptr", msgBuf.Ptr + offset, "ptr", chunk, "uptr", chunk.Size)
+			offset += chunk.Size
+		}
+
+		message := StrGet(msgBuf, total, "UTF-8")
+		return 1
+	}
+
+    /**
+     * Internal method to read a message from the pipe without blocking, using PeekNamedPipe to check for available data and handling cases where the message may be larger than the buffer size.
+     * @param {Ptr} handle The handle to the named pipe to read from.
+     * @param {Integer} bufSize The size of the buffer to use for each read operation.
+     * @param {Ref} message A reference variable to store the complete message read from the pipe.
+     * @param {Ref} bytesRead A reference variable to store the total number of bytes read from the pipe.
+     * @return {Integer} 1 if the message was read successfully, 0 if the pipe was closed by the client, or a negative error code if an error occurred.
+     */
+	_ReadPipeMessageNonBlocking(handle, bufSize, &message, &bytesRead) {
+		; Use PeekNamedPipe to avoid blocking when no data is available.
+		ERROR_NO_DATA := 232
+		ERROR_MORE_DATA := 234
+		ERROR_BROKEN_PIPE := 109
+
+		avail := 0
+		if !DllCall("PeekNamedPipe", "ptr", handle, "ptr", 0, "uint", 0, "uint*", 0, "uint*", &avail, "uint*", 0) {
+			err := DllCall("GetLastError", "uint")
+			if (err = ERROR_BROKEN_PIPE) {
+				return 0
+			}
+			if (err = ERROR_NO_DATA) {
+				bytesRead := 0
+				message := ""
+				return 1
+			}
+			return -err
+		}
+
+		if (avail = 0) {
+			bytesRead := 0
+			message := ""
+			return 1
+		}
+
+		if (avail <= bufSize) {
+			buf := this._readBuf
+			if (buf.Size != bufSize) {
+				buf := Buffer(bufSize, 0)
+				this._readBuf := buf
+			}
+			readNow := 0
+			ok := DllCall("ReadFile", "ptr", handle, "ptr", buf, "uint", bufSize, "uint*", &readNow, "ptr", 0)
+			if !ok {
+				err := DllCall("GetLastError", "uint")
+				if (err = ERROR_MORE_DATA) {
+					return this._ReadPipeMessage(handle, bufSize, &message, &bytesRead)
+				}
+				if (err = ERROR_BROKEN_PIPE) {
+					return 0
+				}
+				return -err
+			}
+			bytesRead := readNow
+			message := (readNow > 0) ? StrGet(buf, readNow, "UTF-8") : ""
+			return 1
+		}
+
+		return this._ReadPipeMessage(handle, bufSize, &message, &bytesRead)
+	}
+
+    /**
+     * Internal method to close the pipe handle and clean up resources when the listener is stopped or the application exits.
+     * @param {Ptr} handle The handle to the named pipe to close.
+     */
+	_ClosePipe(handle) {
+		if (handle && handle != -1) {
+			DllCall("DisconnectNamedPipe", "ptr", handle)
+			DllCall("CloseHandle", "ptr", handle)
+		}
+		if (this._connectEvent) {
+			DllCall("CloseHandle", "ptr", this._connectEvent)
+			this._connectEvent := 0
+		}
+		this._timerInterval := 0
+	}
+
+    /**
+    * Internal method to handle failures by outputting a debug message, showing a message box with the error, and exiting the application.
+    * @param {String} message The error message to display.
+    */    
+	_Fail(message) {
+		OutputDebug("[PipeListener] " . message)
+		MsgBox message, "Pipe Dream shattered", "Iconx"
+		ExitApp
+	}
 }
 
 /**
@@ -1600,6 +2099,34 @@ OnDisplayChange(wParam, lParam, msg, hwnd) {
 }
 
 /**
+ * Function to process messages received from the Komorebi IPC pipe.
+ * @param {String} msg The message received from the pipe
+ * @param {Integer} bytesRead The number of bytes read from the pipe
+ */
+OnKomorebiPipeEvent(msg, bytesRead) {
+    if RegExMatch(msg, '^\{\s*"event"\s*:\s*\{\s*"type"\s*:\s*"([^"]+)"', &eventTypeMatch) {
+        switch eventTypeMatch[1] {
+            case "CycleFocusMonitor",
+                "CycleFocusWorkspace",
+                "FocusMonitorNumber",
+                "FocusMonitorWorkspaceNumber",
+                "FocusWorkspaceNumber":
+                OutputDebug(Format("Handling {} event.", eventTypeMatch[1]))
+                ; Only run FocusDesktopWorkaround if there is no active window.
+                hwnd := WinActive("A")
+                if (hwnd)
+                    return
+                ; This workaround prevents windows from spawning on the wrong workspace.
+                ; Primarily required if you are using Raycast.
+                OutputDebug(Format("No active window detected after {} event, running FocusDesktopWorkaround.", eventTypeMatch[1]))
+                SGlob.FocusDesktopWorkaround()
+            default: 
+                ;OutputDebug(Format("Ignoring incoming event type: {}", eventTypeMatch[1]))
+        }
+    }
+}
+
+/**
  * Callback handler for the WM_SETTINGCHANGE message
  * @param wParam Word Param.
  * This is used to send additional data about the message to the callback.
@@ -1657,6 +2184,12 @@ OnScriptExit(exitReason, exitCode) {
     ; Unregister callbacks
     if (ProcessExitCallback)
         CallbackFree(ProcessExitCallback)
+
+    ; Kill applications
+    SGlob.KillApplications()
+
+    ; Unregister IPC listener
+    IpcListener.Stop()
 
     ; Return with 0 so other callbacks can run
     return 0
@@ -1719,6 +2252,8 @@ WaitForKomorebiExit() {
 ; -----------------------------------------------------------------------------
 
 SGlob.AdjustTray()
+SGlob.FillIgnoredProcessesGroup()
+SGlob.UpdateAltSnapBlacklistProcesses()
 
 /**
  * Initialize the Hotkey List helper window
@@ -1736,6 +2271,14 @@ ProcessExitCallback := CallbackCreate(OnProcessExit)
 ; Check if Komorebi is running and register a callback to be notified
 ; when it exits.
 WaitForKomorebiExit()
+
+; Initialize the IPC Pipe Listener
+IpcListener := PipeListener("\\.\pipe\" . SGlob.KomorebiPipeName, 25, 4096)
+IpcListener.OnMessage := (msg, bytesRead) => (OnKomorebiPipeEvent(msg, bytesRead))
+IpcListener.Start()
+
+; Subscribe to Komorebi IPC events
+SGlob.Komorebic("subscribe " . SGlob.KomorebiPipeName)
 
 ; ---
 
@@ -1782,9 +2325,28 @@ SGlob.Komorebic("watch-configuration enable")
 ; make sure to add a JavaDoc comment above the hotkey definition with at least
 ; a description. The comment must be directly above the hotkey definition.
 ; You can use context, keyword, and ignore tags to provide additional filters.
+; Also make sure to wrap the hotkey action into a function with a unique name
+; so it can be referenced in the hotkey list window. If the hotkey does not have
+; a function name, it will not be shown in the hotkey list window, even if
+; it has a comment with a description.
 
 ; Leave this comment in, it indicates this is where the parsing should start:
 ; @startprocessing
+
+; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+; Overlays                                                                    |
+; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+/**
+ * Disables zoom via Ctrl + Mouse Wheel in Vivaldi when the window is active.
+ * @ignore
+ */
+#HotIf WinActive("ahk_exe vivaldi.exe")
+^WheelUp::
+^WheelDown::
+overlayVivaldiZoom(hk) {
+    ; Just occupy this event so it does not propagate to the browser
+}
 
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 ; General Helpers                                                             |
@@ -1797,6 +2359,7 @@ SGlob.Komorebic("watch-configuration enable")
  * @keyword hotkey-list display
  * @ignore
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #!H::
 toggleHotkeyListWindow(hk) {
     hkHelper.ToggleWindow()
@@ -1808,6 +2371,7 @@ toggleHotkeyListWindow(hk) {
  * @context General
  * @keyword ahk autohotkey script reload bar
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #!A::
 reloadAhkScript(hk) {
     Reload()
@@ -1819,6 +2383,7 @@ reloadAhkScript(hk) {
  * @context Komorebi
  * @keyword replace-configuration reload
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #!R::
 reloadKomorebiConfig(hk) {
     cmd := SGlob.ResolveEnvironmentVariables("replace-configuration %KOMOREBI_CONFIG_HOME%\komorebi.json")
@@ -1831,6 +2396,7 @@ reloadKomorebiConfig(hk) {
  * @context General
  * @keyword touch komorebi bar configuration
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #!B::
 touchKomorebiBar(hk) {
     SGlob.TouchKomorebiBarConfig()
@@ -1841,6 +2407,7 @@ touchKomorebiBar(hk) {
  * @context General
  * @keyword restore minimized window
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #Numpad0::
 restoreWindow(hk) {
     SGlob.RestoreWindow()
@@ -1856,6 +2423,7 @@ restoreWindow(hk) {
  * @context General
  * @keyword terminal application launch
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #Enter::
 launchTerminal(hk) {
     SGlob.RunDefaultApplication("Terminal")
@@ -1867,6 +2435,7 @@ launchTerminal(hk) {
  * @context General
  * @keyword editor application launch
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #+Enter::
 launchEditor(hk) {
     SGlob.RunDefaultApplication("Editor")
@@ -1878,6 +2447,7 @@ launchEditor(hk) {
  * @context General
  * @keyword search application launch
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #^Enter::
 launchSearch(hk) {
     SGlob.RunDefaultApplication("Search")
@@ -1889,6 +2459,7 @@ launchSearch(hk) {
  * @context General
  * @keyword browser application launch
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #Backspace::
 launchBrowser(hk) {
     SGlob.RunDefaultApplication("Browser")
@@ -1904,6 +2475,7 @@ launchBrowser(hk) {
  * @context Komorebi
  * @keyword eager-focus wavebox browser
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #Q::
 eagerFocusWavebox(hk) {
     SGlob.Komorebic("eager-focus wavebox.exe")
@@ -1915,6 +2487,7 @@ eagerFocusWavebox(hk) {
  * @context Komorebi
  * @keyword eager-focus vivaldi browser
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #W::
 eagerFocusVivaldi(hk) {
     SGlob.Komorebic("eager-focus vivaldi.exe")
@@ -1926,6 +2499,7 @@ eagerFocusVivaldi(hk) {
  * @context Komorebi
  * @keyword eager-focus mpv
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #A::
 eagerFocusMpv(hk) {
     SGlob.Komorebic("eager-focus mpv.exe")
@@ -1937,6 +2511,7 @@ eagerFocusMpv(hk) {
  * @context Komorebi
  * @keyword eager-focus vscode
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #S::
 eagerFocusVsCode(hk) {
     SGlob.Komorebic("eager-focus Code.exe")
@@ -1948,6 +2523,7 @@ eagerFocusVsCode(hk) {
  * @context Komorebi
  * @keyword eager-focus multiplicity rdp
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #Y::
 eagerFocusMultiplicityRdp(hk) {
     SGlob.Komorebic("eager-focus MPRDP64.exe")
@@ -1958,15 +2534,31 @@ eagerFocusMultiplicityRdp(hk) {
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 /**
+ * Promote current window
+ * (Win + Shift + P)
+ * @context Komorebi
+ * @keyword promote window
+ */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
+#+P::
+promoteWindow(hk) {
+    SGlob.Komorebic("promote")
+}
+
+/**
  * Toggle Maximize for Current Window
  * (Win + Insert)
  * @context Komorebi
  * @keyword toggle-maximize window
+ * @disabled
  */
+/*
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #Insert::
 toggleMaximize(hk){
     SGlob.Komorebic("toggle-maximize")
 }
+*/
 
 /**
  * Minimize Current Window
@@ -1974,6 +2566,7 @@ toggleMaximize(hk){
  * @context Komorebi
  * @keyword minimize window
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #Delete::
 minimizeWindow(hk){
     SGlob.MinimizeWindow()
@@ -1985,6 +2578,7 @@ minimizeWindow(hk){
  * @context Komorebi
  * @keyword close window
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #Escape::
 closeWindow(hk){
     SGlob.Komorebic("close")
@@ -1995,7 +2589,10 @@ closeWindow(hk){
  * (Win + Shift + C)
  * @context Komodo General
  * @keyword center-active-window
+ * @disabled
  */
+/*
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #+C::
 centerRegularActiveWindow(hk) {
     if (SGlob.IsKomoDoAvailable())
@@ -2003,6 +2600,7 @@ centerRegularActiveWindow(hk) {
     else
         SGlob.CenterActiveWindow()
 }
+*/
 
 /**
  * Retile
@@ -2010,6 +2608,7 @@ centerRegularActiveWindow(hk) {
  * @context Komorebi
  * @keyword retile
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 !+R::
 retile(hk) {
     SGlob.Komorebic("retile")
@@ -2021,6 +2620,7 @@ retile(hk) {
  * @context Komorebi
  * @keyword enforce-workspace-rules
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 !+E::
 enforceWorkspaceRules(hk) {
     SGlob.Komorebic("enforce-workspace-rules")
@@ -2032,6 +2632,7 @@ enforceWorkspaceRules(hk) {
  * @context Komorebi
  * @keyword toggle-pause
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 !+P::
 togglePause(hk) {
     SGlob.Komorebic("toggle-pause")
@@ -2043,6 +2644,7 @@ togglePause(hk) {
  * @context Komorebi
  * @keyword toggle-mouse-follows-focus
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 !+F::
 toggleMouseFollowsFocus(hk) {
     SGlob.Komorebic("toggle-mouse-follows-focus")
@@ -2054,6 +2656,7 @@ toggleMouseFollowsFocus(hk) {
  * @context Komorebi
  * @keyword toggle-workspace-layer
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #!Space::
 toggleWorkspaceLayer(hk) {
     SGlob.Komorebic("toggle-workspace-layer")
@@ -2065,6 +2668,7 @@ toggleWorkspaceLayer(hk) {
  * @context Komorebi
  * @keyword toggle-float-override
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #+Space::
 toggleFloatOverride(hk) {
     SGlob.Komorebic("toggle-float-override")
@@ -2076,6 +2680,7 @@ toggleFloatOverride(hk) {
  * @context Komorebi
  * @keyword toggle-float
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 !+Space::
 toggleFloat(hk) {
     SGlob.Komorebic("toggle-float")
@@ -2087,6 +2692,7 @@ toggleFloat(hk) {
  * @context Komorebi
  * @keyword toggle-monocle
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 !+M::
 toggleMonocle(hk) {
     SGlob.Komorebic("toggle-monocle")
@@ -2098,6 +2704,7 @@ toggleMonocle(hk) {
  * @context General
  * @keyword komorebi-bar display
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #+S::
 reinitializeKomorebiBar(hk) {
     SGlob.RunOrKillKomorebiBarOnDisplayChange()
@@ -2111,6 +2718,7 @@ reinitializeKomorebiBar(hk) {
  * @context Komorebi
  * @keyword stop bar ahk
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #!X::
 stopKomorebi(hk) {
     SGlob.Komorebic("stop --bar --ahk")
@@ -2125,6 +2733,7 @@ stopKomorebi(hk) {
  * @context Komorebi
  * @keyword focus left scroll left
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 !Left::
 #!WheelUp::
 focusLeft(hk) {
@@ -2136,6 +2745,7 @@ focusLeft(hk) {
  * @context Komorebi
  * @keyword focus down
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 !Down::
 focusDown(hk) {
     SGlob.Komorebic("focus down")
@@ -2146,6 +2756,7 @@ focusDown(hk) {
  * @context Komorebi
  * @keyword focus up
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 !Up::
 focusUp(hk) {
     SGlob.Komorebic("focus up")
@@ -2156,6 +2767,7 @@ focusUp(hk) {
  * @context Komorebi
  * @keyword focus right scroll right
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 !Right::
 #!WheelDown::
 focusRight(hk) {
@@ -2171,6 +2783,7 @@ focusRight(hk) {
  * @context Komorebi
  * @keyword move left
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 !+Left::
 moveLeft(hk) {
     SGlob.Komorebic("move left")
@@ -2181,6 +2794,7 @@ moveLeft(hk) {
  * @context Komorebi
  * @keyword move down
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 !+Down::
 moveDown(hk) {
     SGlob.Komorebic("move down")
@@ -2191,6 +2805,7 @@ moveDown(hk) {
  * @context Komorebi
  * @keyword move up
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 !+Up::
 moveUp(hk) {
     SGlob.Komorebic("move up")
@@ -2201,6 +2816,7 @@ moveUp(hk) {
  * @context Komorebi
  * @keyword move right
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 !+Right::
 moveRight(hk) {
     SGlob.Komorebic("move right")
@@ -2215,6 +2831,7 @@ moveRight(hk) {
  * @context Komorebi
  * @keyword resize-axis horizontal increase
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #+Right::
 resizeAxisHorizontalIncrease(hk) {
     SGlob.Komorebic("resize-axis horizontal increase")
@@ -2225,6 +2842,7 @@ resizeAxisHorizontalIncrease(hk) {
  * @context Komorebi
  * @keyword resize-axis horizontal decrease
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #+Left::
 resizeAxisHorizontalDecrease(hk) {
     SGlob.Komorebic("resize-axis horizontal decrease")
@@ -2235,6 +2853,7 @@ resizeAxisHorizontalDecrease(hk) {
  * @context Komorebi
  * @keyword resize-axis vertical increase
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #+Up::
 resizeAxisVerticalIncrease(hk) {
     SGlob.Komorebic("resize-axis vertical increase")
@@ -2245,6 +2864,7 @@ resizeAxisVerticalIncrease(hk) {
  * @context Komorebi
  * @keyword resize-axis vertical decrease
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #+Down::
 resizeAxisVerticalDecrease(hk) {
     SGlob.Komorebic("resize-axis vertical decrease")
@@ -2259,6 +2879,7 @@ resizeAxisVerticalDecrease(hk) {
  * @context Komorebi
  * @keyword cycle-workspace previous
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #WheelUp::
 cycleWorkspacePrevious(hk) {
     SGlob.Komorebic("cycle-workspace previous")
@@ -2269,6 +2890,7 @@ cycleWorkspacePrevious(hk) {
  * @context Komorebi
  * @keyword cycle-workspace next
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #WheelDown::
 cycleWorkspaceNext(hk) {
     SGlob.Komorebic("cycle-workspace next")
@@ -2283,6 +2905,7 @@ cycleWorkspaceNext(hk) {
  * @context Komorebi
  * @keyword set-layout bsp
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #!Up::
 changeLayoutBsp(hk) {
     SGlob.Komorebic("change-layout bsp")
@@ -2293,6 +2916,7 @@ changeLayoutBsp(hk) {
  * @context Komorebi
  * @keyword set-layout horizontal-stack
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #!Left::
 changeLayoutHorizontalStack(hk) {
     SGlob.Komorebic("change-layout horizontal-stack")
@@ -2303,6 +2927,7 @@ changeLayoutHorizontalStack(hk) {
  * @context Komorebi
  * @keyword set-layout vertical-stack
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #!Right::
 changeLayoutVerticalStack(hk) {
     SGlob.Komorebic("change-layout vertical-stack")
@@ -2317,6 +2942,7 @@ changeLayoutVerticalStack(hk) {
  * @context Komorebi
  * @keyword flip-layout horizontal
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #PgUp::
 flipLayoutHorizontal(hk) {
     SGlob.Komorebic("flip-layout horizontal")
@@ -2327,6 +2953,7 @@ flipLayoutHorizontal(hk) {
  * @context Komorebi
  * @keyword flip-layout vertical
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #PgDn::
 flipLayoutVertical(hk) {
     SGlob.Komorebic("flip-layout vertical")
@@ -2341,6 +2968,7 @@ flipLayoutVertical(hk) {
  * @context Komorebi
  * @keyword stack left
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 ^#Left::
 stackWindowsLeft(hk) {
     SGlob.Komorebic("stack left")
@@ -2351,6 +2979,7 @@ stackWindowsLeft(hk) {
  * @context Komorebi
  * @keyword stack down
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 ^#Down::
 stackWindowsDown(hk) {
     SGlob.Komorebic("stack down")
@@ -2361,6 +2990,7 @@ stackWindowsDown(hk) {
  * @context Komorebi
  * @keyword stack up
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 ^#Up::
 stackWindowsUp(hk) {
     SGlob.Komorebic("stack up")
@@ -2371,6 +3001,7 @@ stackWindowsUp(hk) {
  * @context Komorebi
  * @keyword stack right
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 ^#Right::
 stackWindowsRight(hk) {
     SGlob.Komorebic("stack right")
@@ -2381,6 +3012,7 @@ stackWindowsRight(hk) {
  * @context Komorebi
  * @keyword unstack
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 ^#-::
 unstackWindows(hk) {
     SGlob.Komorebic("unstack")
@@ -2391,6 +3023,7 @@ unstackWindows(hk) {
  * @context Komorebi
  * @keyword cycle-stack previous
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 ^#,::
 cycleStackPrevious(hk) {
     SGlob.Komorebic("cycle-stack previous")
@@ -2401,6 +3034,7 @@ cycleStackPrevious(hk) {
  * @context Komorebi
  * @keyword cycle-stack next
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 ^#.::
 cycleStackNext(hk) {
     SGlob.Komorebic("cycle-stack next")
@@ -2415,6 +3049,7 @@ cycleStackNext(hk) {
  * @context Komorebi
  * @keyword cycle-monitor next
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #Home::
 cycleMonitorNext(hk) {
     SGlob.Komorebic("cycle-monitor next")
@@ -2425,6 +3060,7 @@ cycleMonitorNext(hk) {
  * @context Komorebi
  * @keyword cycle-monitor previous
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #End::
 cycleMonitorPrevious(hk) {
     SGlob.Komorebic("cycle-monitor previous")
@@ -2439,6 +3075,7 @@ cycleMonitorPrevious(hk) {
  * @context Komorebi
  * @keyword focus-monitor 0
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #F1::
 focusMonitor0(hk) {
     SGlob.Komorebic("focus-monitor 0")
@@ -2449,6 +3086,7 @@ focusMonitor0(hk) {
  * @context Komorebi
  * @keyword focus-monitor 1
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #F2::
 focusMonitor1(hk) {
     SGlob.Komorebic("focus-monitor 1")
@@ -2463,6 +3101,7 @@ focusMonitor1(hk) {
  * @context Komorebi
  * @keyword send-to-monitor 0
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #+F1::
 sendToMonitor0(hk) {
     SGlob.Komorebic("send-to-monitor 0")
@@ -2473,13 +3112,14 @@ sendToMonitor0(hk) {
  * @context Komorebi
  * @keyword send-to-monitor 1
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #+F2::
 sendToMonitor1(hk) {
     SGlob.Komorebic("send-to-monitor 1")
 }
 
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-; Send to Workspace 1-7 (same monitor, Win + Shift + 1-7)                     |
+; Send to Workspace 1-9 (same monitor, Win + Shift + 1-9)                     |
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 /**
@@ -2487,6 +3127,7 @@ sendToMonitor1(hk) {
  * @context Komorebi
  * @keyword move-to-workspace 0
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #+1::
 #+Numpad1::
 sendToWorkspace1(hk) {
@@ -2498,6 +3139,7 @@ sendToWorkspace1(hk) {
  * @context Komorebi
  * @keyword move-to-workspace 1
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #+2::
 #+Numpad2::
 sendToWorkspace2(hk) {
@@ -2509,6 +3151,7 @@ sendToWorkspace2(hk) {
  * @context Komorebi
  * @keyword move-to-workspace 2
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #+3::
 #+Numpad3::
 sendToWorkspace3(hk) {
@@ -2520,6 +3163,7 @@ sendToWorkspace3(hk) {
  * @context Komorebi
  * @keyword move-to-workspace 3
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #+4::
 #+Numpad4::
 sendToWorkspace4(hk) {
@@ -2531,6 +3175,7 @@ sendToWorkspace4(hk) {
  * @context Komorebi
  * @keyword move-to-workspace 4
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #+5::
 #+Numpad5::
 sendToWorkspace5(hk) {
@@ -2542,6 +3187,7 @@ sendToWorkspace5(hk) {
  * @context Komorebi
  * @keyword move-to-workspace 5
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #+6::
 #+Numpad6::
 sendToWorkspace6(hk) {
@@ -2553,14 +3199,39 @@ sendToWorkspace6(hk) {
  * @context Komorebi
  * @keyword move-to-workspace 6
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #+7::
 #+Numpad7::
 sendToWorkspace7(hk) {
     SGlob.CheckWorkspaceAndExecute("move-to-workspace", 6)
 }
 
+/**
+ * Send to Workspace 8 (Same Monitor)
+ * @context Komorebi
+ * @keyword move-to-workspace 7
+ */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
+#+8::
+#+Numpad8::
+sendToWorkspace8(hk) {
+    SGlob.CheckWorkspaceAndExecute("move-to-workspace", 7)
+}
+
+/**
+ * Send to Workspace 9 (Same Monitor)
+ * @context Komorebi
+ * @keyword move-to-workspace 8
+ */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
+#+9::
+#+Numpad9::
+sendToWorkspace9(hk) {
+    SGlob.CheckWorkspaceAndExecute("move-to-workspace", 8)
+}
+
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
-; Switch to Workspace 1-7 (same monitor, Win + 1-7)                           |
+; Switch to Workspace 1-9 (same monitor, Win + 1-9)                           |
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 
 /**
@@ -2568,6 +3239,7 @@ sendToWorkspace7(hk) {
  * @context Komorebi
  * @keyword focus-workspace 0
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #1::
 #Numpad1::
 switchToWorkspace1(hk) {
@@ -2579,6 +3251,7 @@ switchToWorkspace1(hk) {
  * @context Komorebi
  * @keyword focus-workspace 1
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #2::
 #Numpad2::
 switchToWorkspace2(hk) {
@@ -2590,6 +3263,7 @@ switchToWorkspace2(hk) {
  * @context Komorebi
  * @keyword focus-workspace 2
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #3::
 #Numpad3::
 switchToWorkspace3(hk) {
@@ -2601,6 +3275,7 @@ switchToWorkspace3(hk) {
  * @context Komorebi
  * @keyword focus-workspace 3
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #4::
 #Numpad4::
 switchToWorkspace4(hk) {
@@ -2612,6 +3287,7 @@ switchToWorkspace4(hk) {
  * @context Komorebi
  * @keyword focus-workspace 4
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #5::
 #Numpad5::
 switchToWorkspace5(hk) {
@@ -2623,6 +3299,7 @@ switchToWorkspace5(hk) {
  * @context Komorebi
  * @keyword focus-workspace 5
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #6::
 #Numpad6::
 switchToWorkspace6(hk) {
@@ -2634,10 +3311,35 @@ switchToWorkspace6(hk) {
  * @context Komorebi
  * @keyword focus-workspace 6
  */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #7::
 #Numpad7::
 switchToWorkspace7(hk) {
     SGlob.CheckWorkspaceAndExecute("focus-workspace", 6)
+}
+
+/**
+ * Switch to Workspace 8 (Same Monitor)
+ * @context Komorebi
+ * @keyword focus-workspace 7
+ */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
+#8::
+#Numpad8::
+switchToWorkspace8(hk) {
+    SGlob.CheckWorkspaceAndExecute("focus-workspace", 7)
+}
+
+/**
+ * Switch to Workspace 9 (Same Monitor)
+ * @context Komorebi
+ * @keyword focus-workspace 8
+ */
+#HotIf !WinActive("ahk_group KomoIgnoreProcesses")
+#9::
+#Numpad9::
+switchToWorkspace9(hk) {
+    SGlob.CheckWorkspaceAndExecute("focus-workspace", 8)
 }
 
 /* ----------------------------------------------------------------------------

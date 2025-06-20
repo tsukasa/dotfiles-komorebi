@@ -1,6 +1,15 @@
 {
     "$schema": "https://raw.githubusercontent.com/LGUG2Z/komorebi/master/schema.asc.json",
 
+    "1st Clock": {
+        "ignore": [
+            {
+                "id": "1stClock.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            }
+        ]
+    },
     "AltSnap": {
         "ignore": [
             {
@@ -33,6 +42,15 @@
             },
             {
                 "id": "AutoHotkey64.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            }
+        ]
+    },
+    "BareTailPro": {
+        "floating": [
+            {
+                "id": "baretailpro.exe",
                 "kind": "Exe",
                 "matching_strategy": "Equals"
             }
@@ -104,6 +122,15 @@
             }
         ]
     },
+    "Duplicate File Detective": {
+        "floating": [
+            {
+                "id": "DFD.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            }
+        ]
+    },
     "DSXv2": {
         "ignore": [
             {
@@ -170,6 +197,15 @@
             }
         ]
     },
+    "FastStone Capture": {
+        "ignore": [
+            {
+                "id": "FSCapture.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            }
+        ]
+    },
     "FINAL FANTASY XIV": {
         "ignore": [
             {
@@ -217,6 +253,29 @@
                     "matching_strategy": "DoesNotEqual"
                 }
             ]
+        ]
+    },
+    "komorebi-switcher": {
+        "ignore": [
+            {
+                "id": "komorebi-switcher.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            }
+        ]
+    },
+    "Listary": {
+        "ignore": [
+            {
+                "id": "Listary.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            },
+            {
+                "id": "ListarySearchBox",
+                "kind": "Class",
+                "matching_strategy": "Equals"
+            }
         ]
     },
     "mpv": {
@@ -281,6 +340,15 @@
                     "matching_strategy": "Regex"
                 }
             ]
+        ]
+    },
+    "Raycast": {
+        "ignore": [
+            {
+                "id": "Raycast.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            }
         ]
     },
     "Steam": {
@@ -363,34 +431,29 @@
                 "kind": "Exe",
                 "matching_strategy": "Legacy"
             }
+        ],
+        "ignore": [
+            [
+                {
+                    "id": "vivaldi.exe",
+                    "kind": "Exe",
+                    "matching_strategy": "Legacy"
+                },
+                {
+                    "id": "Picture in picture",
+                    "kind": "Title",
+                    "matching_strategy": "Equals"
+                }
+            ]
         ]
     },
     "VLC": {
-        "manage": [
+        "ignore": [
             [
                 {
                     "id": "vlc.exe",
                     "kind": "Exe",
                     "matching_strategy": "Equals"
-                },
-                {
-                    "id": "Qt\\d+QWindowIcon",
-                    "kind": "Class",
-                    "matching_strategy": "Regex"
-                }
-            ]
-        ],
-        "slow_application": [
-            [
-                {
-                    "id": "vlc.exe",
-                    "kind": "Exe",
-                    "matching_strategy": "Equals"
-                },
-                {
-                    "id": "Qt\\d+QWindowIcon",
-                    "kind": "Class",
-                    "matching_strategy": "Regex"
                 }
             ]
         ]
@@ -413,6 +476,15 @@
         "tray_and_multi_window": [
             {
                 "id": "Wavebox.exe",
+                "kind": "Exe",
+                "matching_strategy": "Equals"
+            }
+        ]
+    },
+    "WinSCP": {
+        "floating": [
+            {
+                "id": "WinSCP.exe",
                 "kind": "Exe",
                 "matching_strategy": "Equals"
             }

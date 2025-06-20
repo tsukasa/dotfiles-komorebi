@@ -1,6 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/LGUG2Z/komorebi/refs/heads/master/schema.json",
-  
+
   "animation": {
     "duration": 250,
     "enabled": true,
@@ -12,7 +12,7 @@
     "$Env:KOMOREBI_CONFIG_HOME/applications.json",
     "$Env:KOMOREBI_CONFIG_HOME/applications.user.json"
   ],
-  
+
   "bar_configurations": [
     "$Env:KOMOREBI_CONFIG_HOME/komorebi.bar.monitor00.json",
     "$Env:KOMOREBI_CONFIG_HOME/komorebi.bar.monitor01.json"
@@ -29,6 +29,7 @@
 
   "default_container_padding": 3,
   "default_workspace_padding": 3,
+  "default_workspace_layout": "BSP",
 
   // Get the informations via "komorebic monitor-information"
   // Be sure to check the "left" property to see which one is which...
@@ -48,7 +49,8 @@
     {
       "workspaces": [
         {
-          "name": "一",
+          //"name": "一",
+          "name": "1",
           "layout": "VerticalStack",
           "apply_window_based_work_area_offset": true,
           "window_container_behaviour": "Create",
@@ -58,10 +60,11 @@
             "scrolling": {
               "columns": 2
             }
-          },
+          }
         },
         {
-          "name": "二",
+          //"name": "二",
+          "name": "2",
           "layout": "VerticalStack",
           "apply_window_based_work_area_offset": true,
           "window_container_behaviour": "Create",
@@ -81,11 +84,12 @@
           ]
         },
         {
-          "name": "三",
+          //"name": "三",
+          "name": "3",
           "layout": "VerticalStack",
           "apply_window_based_work_area_offset": true,
           "window_container_behaviour": "Create",
-          "float_override": false,
+          "float_override": true,
           "floating_layer_behaviour": "Float",
           "layout_options": {
             "scrolling": {
@@ -94,22 +98,22 @@
           },
         },
         {
-          "name": "四",
+          //"name": "四",
+          "name": "4",
           "layout": "VerticalStack",
           "apply_window_based_work_area_offset": true,
           "window_container_behaviour": "Append",
-          "float_override": false,
+          "float_override": true,
           "floating_layer_behaviour": "Float",
           "layout_options": {
             "scrolling": {
-              "columns": 2
+              "columns": 1
             }
-          },
-          "initial_workspace_rules": [
-          ]
+          }
         },
         {
-          "name": "五",
+          //"name": "五",
+          "name": "5",
           "layout": "VerticalStack",
           "apply_window_based_work_area_offset": true,
           "window_container_behaviour": "Append",
@@ -117,7 +121,7 @@
           "floating_layer_behaviour": "Float",
           "layout_options": {
             "scrolling": {
-              "columns": 2
+              "columns": 1
             }
           },
           "initial_workspace_rules": [
@@ -130,7 +134,8 @@
           ]
         },
         {
-          "name": "六",
+          //"name": "六",
+          "name": "6",
           "layout": "VerticalStack",
           "apply_window_based_work_area_offset": true,
           "window_container_behaviour": "Append",
@@ -238,9 +243,9 @@
 
   // Without m_f_f, switching workspaces happens on the monitor where the mouse is.
   "mouse_follows_focus": true,
-  
+
   "resize_delta": 50,
-  
+
   "slow_application_compensation_time": 100,
 
   // Disable stackbar by setting "mode" to "Never".

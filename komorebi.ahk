@@ -423,14 +423,15 @@ Class SGlob {
         loop parse, content, "`n", "`r" {
             if (InStr(A_LoopField, "=")) {
                 keyValuePair := StrSplit(A_LoopField, "=", , 2)
+                applicationName := keyValuePair[1]
                 applicationExecutable := keyValuePair[2]
                 applicationExecutable := StrReplace(applicationExecutable, "`"")
 
                 if (ProcessExist(applicationExecutable)) {
-                    OutputDebug("Attempting to kill application: " . applicationExecutable)
+                    OutputDebug(Format("Attempting to kill application {}: {}", applicationName, applicationExecutable))
                     ProcessClose(applicationExecutable)
                 } else {
-                    OutputDebug("No process found to kill, skipping: " . applicationExecutable)
+                    OutputDebug(Format("No process found for {}, skipping.", applicationName))
                 }
             }
         }
@@ -520,11 +521,11 @@ Class SGlob {
             pid := SGlob.KomorebiBarTouchConfigQueue.Pop()
             
             if (alreadyTouched.Has(pid)) {
-                OutputDebug("Already touched Komorebi Bar config for PID " . pid . ", skipping...")
+                OutputDebug(Format("Already touched Komorebi Bar config for PID {}, skipping...", pid))
                 continue
             }
             
-            OutputDebug("Touching Komorebi Bar config for PID " . pid)
+            OutputDebug(Format("Touching Komorebi Bar config for PID {}", pid))
             SGlob.TouchKomorebiBarConfig(pid)
             alreadyTouched.Push(pid)
         }
@@ -536,7 +537,7 @@ Class SGlob {
      * @param {Integer} pid Process ID that should get "the touch".
      */
     static QueueKomorebiBarTouchConfig(pid := -1) {
-        OutputDebug("Queueing touching komorebi-bar config for PID: " . pid)
+        OutputDebug(Format("Queueing touching komorebi-bar config for PID: {}", pid))
         SGlob.KomorebiBarTouchConfigQueue.Push(pid)
     }
 
@@ -545,7 +546,7 @@ Class SGlob {
      * @param {String} section INI section to read from
      * @param {String} key INI key in the section to read
      * @param {String} defaultValue Default value if no key was found
-     * @return {String} The value of the key read from the ini file
+     * @returns {String} The value of the key read from the ini file
      */
     static ReadIniValue(section, key, defaultValue := "") {
         if (!FileExist(SGlob.IniFilePath))
@@ -914,7 +915,7 @@ Class HotkeyListHelper {
 
         ; Store hotkeys for filtering
         this.hotkeys := []
-        this.listViewRelations := Map()
+        this.listViewRelations := OrderedMap()
 
         ; Font for the GUI
         font := SGlob.ReadIniValue("HotkeyLister", "Font", "Courier New")
@@ -963,7 +964,7 @@ Class HotkeyListHelper {
         
         ; Wire up Windows message handler
         OnMessage(0x86, this.OnWmActivate.Bind(this)) ; WM_ACTIVATE
-        OnMessage(0x100, this.OnWmKeyDown.Bind(this))  ; WM_KEYDOWN = 0x100
+        OnMessage(0x100, this.OnWmKeyDown.Bind(this)) ; WM_KEYDOWN = 0x100
         
         ; Prepare data
         this.LoadHotkeyDefinitions()
@@ -976,33 +977,42 @@ Class HotkeyListHelper {
      * @returns {String} The formatted hotkey string
      */
     FormatHotkeyName(hotkeyStr) {
+        ; Define labels for each modifier key
+        keyLabelsMap := OrderedMap(
+            ; Win
+            "<#",   "LWin",
+            ">#",   "RWin",
+            "#",    "Win",
+            "LWin", "L.Win",
+            "RWin", "R.Win",
+            ; Alt
+            "<^>!", "AltGr",
+            "<!",   "LAlt",
+            ">!",   "RAlt",
+            "!",    "Alt",
+            ; Ctrl
+            "<^",   "LCtrl",
+            ">^",   "RCtrl",
+            "^",    "Ctrl",
+            ; Shift
+            "<+",   "LShift",
+            ">+",   "RShift",
+            "+",    "Shift",
+        )
         parts := []
 
-        ; Process modifiers in order
-        ; Remove them from the string to ensure only the key remains
-        if (InStr(hotkeyStr, "#")) {
-            hotkeyStr := StrReplace(hotkeyStr, "#", "")
-            parts.Push("Win")
-        }
-        if (InStr(hotkeyStr, "LWin")) {
-            hotkeyStr := StrReplace(hotkeyStr, "LWin", "")
-            parts.Push("L.Win")
-        }
-        if (InStr(hotkeyStr, "RWin")) {
-            hotkeyStr := StrReplace(hotkeyStr, "RWin", "")
-            parts.Push("R.Win")
-        }
-        if (InStr(hotkeyStr, "!")) {
-            hotkeyStr := StrReplace(hotkeyStr, "!", "")
-            parts.Push("Alt")
-        }
-        if (InStr(hotkeyStr, "^")) {
-            hotkeyStr := StrReplace(hotkeyStr, "^", "")
-            parts.Push("Ctrl")
-        }
-        if (InStr(hotkeyStr, "+")) {
-            hotkeyStr := StrReplace(hotkeyStr, "+", "")
-            parts.Push("Shift")
+        ; Process modifiers - but only once per hotkey!
+        ; Every other occurance of the modifier char is likely
+        ; intended to be the literal key value.
+        for key, label in keyLabelsMap {
+            keyPos := InStr(hotkeyStr, key)
+
+            if (keyPos > 0 && keyPos < StrLen(hotkeyStr) - StrLen(key) + 1) {
+                if (!parts.Has(label)) {
+                    hotkeyStr := StrReplace(hotkeyStr, key, "", 0, , 1)
+                    parts.Push(label)
+                }
+            }
         }
 
         ; Extract the key (last non-modifier character)
@@ -1027,8 +1037,8 @@ Class HotkeyListHelper {
 
         OutputDebug("Hiding hotkey list window...")
 
-        this.hotkeyGui.Hide()
         this.IsGuiVisible := false
+        this.hotkeyGui.Hide()
     }
 
     /**
@@ -1178,7 +1188,9 @@ Class HotkeyListHelper {
             this.HideWindow()
 
             function := selectedHotkey.functionName
-            %function%(selectedHotkey.rawhotkey)
+
+            if(this.IsFunc(%function%?))
+                %function%(selectedHotkey.rawhotkey)
         }
     }
 
@@ -1396,7 +1408,7 @@ Class HotkeyListHelper {
     UpdateListView(searchTerm := "") {
         DllCall("LockWindowUpdate", "UInt", this.hotkeyGui.Hwnd)
         this.listView.Delete()
-        this.listViewRelations := Map()
+        this.listViewRelations := OrderedMap()
         searchTerm := StrLower(searchTerm)
         for (hotkeyInfo in this.hotkeys) {
             if (searchTerm = ""
@@ -1436,9 +1448,9 @@ Class HotkeyListHelper {
  * Creates a named pipe and then listens for incoming connections and messages.
  * Non-blocking (hopefully)
  */
-Class PipeListener {
+Class NamedPipeListener {
     /**
-     * Creates a new instance of the PipeListener class.
+     * Creates a new instance of the NamedPipeListener class.
      * @param {String} pipeName The name of the pipe to create and listen on.
      * @param {Number} pollMs The interval in milliseconds to poll for new messages when a client is connected.
      * @param {Number} bufSize The size of the buffer to use when reading messages from the pipe.
@@ -1455,7 +1467,7 @@ Class PipeListener {
 		this._connected := false
 		this._readBuf := Buffer(bufSize, 0)
 		this._timerInterval := 0
-		this.OnMessage := (msg, bytesRead) => OutputDebug("Received (" . bytesRead . " bytes): " . msg)
+		this.OnMessage := (msg, bytesRead) => OutputDebug(Format("Received ({} bytes): {}", bytesRead, msg))
 	}
 
     /**
@@ -1465,7 +1477,7 @@ Class PipeListener {
 		this.Handle := this._CreateInboundPipe(this.PipeName)
 		this._connected := false
 		this._connecting := true
-		OutputDebug(Format("[PipeListener] Waiting for client on {}...", this.PipeName))
+		OutputDebug(Format("[NamedPipeListener] Waiting for client on {}...", this.PipeName))
 		this._ConnectPipeNonBlocking(this.Handle)
 		this._timer := ObjBindMethod(this, "_Tick")
 		this._SetTimerInterval(this.IdlePollMs)
@@ -1493,7 +1505,7 @@ Class PipeListener {
 			if !this._CheckConnected() {
 				return
 			}
-			OutputDebug("[PipeListener] Client connected. Listening for data...")
+			OutputDebug("[NamedPipeListener] Client connected. Listening for data...")
 			this._SetTimerInterval(this.PollMs)
 		}
 
@@ -1505,12 +1517,12 @@ Class PipeListener {
 		bytesRead := 0
 		status := this._ReadPipeMessageNonBlocking(this.Handle, this.BufSize, &msg, &bytesRead)
 		if (status = 0) {
-			OutputDebug("[PipeListener] Pipe closed by client.")
+			OutputDebug("[NamedPipeListener] Pipe closed by client.")
 			this.Stop()
 			ExitApp
 		}
 		if (status < 0) {
-			this._Fail("[PipeListener] ReadFile failed. Error: " . (-status))
+			this._Fail(Format("[NamedPipeListener] ReadFile failed. Error: {}", -status))
 		}
 		if (bytesRead > 0) {
 			cb := this.OnMessage
@@ -1552,7 +1564,7 @@ Class PipeListener {
 
 		if (handle = -1) {
 			err := DllCall("GetLastError", "uint")
-			this._Fail("[PipeListener] CreateNamedPipe failed. Error: " . err)
+			this._Fail(Format("[NamedPipeListener] CreateNamedPipe failed. Error: {}", err))
 		}
 
 		OnExit(*) => this._ClosePipe(handle)
@@ -1598,13 +1610,13 @@ Class PipeListener {
 			return
 		}
 		if (err != ERROR_IO_PENDING) {
-			this._Fail("ConnectNamedPipe failed. Error: " . err)
+			this._Fail(Format("ConnectNamedPipe failed. Error: {}", err))
 		}
 	}
 
     /**
      * Internal method to check if the overlapped connection has completed and update the connection state accordingly.
-     * @return {Boolean} True if the connection is established, false otherwise.
+     * @returns {Boolean} True if the connection is established, false otherwise.
      */
 	_CheckConnected() {
 		; Poll overlapped connection completion.
@@ -1622,7 +1634,7 @@ Class PipeListener {
 			return false
 		}
 		if (wait != WAIT_OBJECT_0) {
-			this._Fail("WaitForSingleObject failed. Error: " DllCall("GetLastError", "uint"))
+			this._Fail(Format("WaitForSingleObject failed. Error: {}", DllCall("GetLastError", "uint")))
 		}
 
 		bytes := 0
@@ -1631,7 +1643,7 @@ Class PipeListener {
 			if (err = ERROR_IO_INCOMPLETE) {
 				return false
 			}
-			this._Fail("GetOverlappedResult failed. Error: " . err)
+			this._Fail(Format("GetOverlappedResult failed. Error: {}", err))
 		}
 
 		this._connected := true
@@ -1645,7 +1657,7 @@ Class PipeListener {
      * @param {Integer} bufSize The size of the buffer to use for each read operation.
      * @param {Ref} message A reference variable to store the complete message read from the pipe.
      * @param {Ref} bytesRead A reference variable to store the total number of bytes read from the pipe.
-     * @return {Integer} 1 if the message was read successfully, 0 if the pipe was closed by the client, or a negative error code if an error occurred.
+     * @returns {Integer} 1 if the message was read successfully, 0 if the pipe was closed by the client, or a negative error code if an error occurred.
      */
 	_ReadPipeMessage(handle, bufSize, &message, &bytesRead) {
 		; Collect an entire message to avoid splitting output across reads.
@@ -1708,7 +1720,7 @@ Class PipeListener {
      * @param {Integer} bufSize The size of the buffer to use for each read operation.
      * @param {Ref} message A reference variable to store the complete message read from the pipe.
      * @param {Ref} bytesRead A reference variable to store the total number of bytes read from the pipe.
-     * @return {Integer} 1 if the message was read successfully, 0 if the pipe was closed by the client, or a negative error code if an error occurred.
+     * @returns {Integer} 1 if the message was read successfully, 0 if the pipe was closed by the client, or a negative error code if an error occurred.
      */
 	_ReadPipeMessageNonBlocking(handle, bufSize, &message, &bytesRead) {
 		; Use PeekNamedPipe to avoid blocking when no data is available.
@@ -1783,10 +1795,106 @@ Class PipeListener {
     * @param {String} message The error message to display.
     */    
 	_Fail(message) {
-		OutputDebug("[PipeListener] " . message)
+		OutputDebug(Format("[NamedPipeListener] {}", message))
 		MsgBox message, "Pipe Dream shattered", "Iconx"
 		ExitApp
 	}
+}
+
+/**
+ * An ordered Map implementation
+ * https://autohotkey.com/boards/viewtopic.php?f=82&t=94114&p=418207
+ */
+Class OrderedMap extends Map {
+    __New(KVPairs*) {
+        super.__New(KVPairs*)
+
+        KeyArray := []
+        keyCount := KVPairs.Length // 2
+        KeyArray.Length := keyCount
+
+        Loop keyCount
+            KeyArray[A_Index] := KVPairs[(A_Index << 1) - 1]
+
+        this.KeyArray := KeyArray
+    }
+
+    __Item[key] {
+        set {
+            if !this.Has(key)
+                this.KeyArray.Push(key)
+
+            return super[key] := value
+        }
+    }
+
+    Clear() {
+        super.Clear()
+        this.KeyArray := []
+    }
+
+    Clone() {
+        Other := super.Clone()
+        Other.KeyArray := this.KeyArray.Clone()
+        return Other
+    }
+
+    Delete(key) {
+        try {
+            RemovedValue := super.Delete(key)
+
+            CaseSense := this.CaseSense
+            for i, Element in this.KeyArray {
+                areSame := (Element is String)
+                    ? !StrCompare(Element, key, CaseSense)
+                    : (Element = key)
+
+                if areSame {
+                    this.KeyArray.RemoveAt(i)
+                    break
+                }
+            }
+
+            return RemovedValue
+        }
+        catch Error as Err
+            throw Error(Err.Message, -1, Err.Extra)
+    }
+
+    Set(KVPairs*) {
+        if (KVPairs.Length & 1)
+            throw ValueError('Invalid number of parameters.', -1)
+
+        KeyArray := this.KeyArray
+        keyCount := KVPairs.Length // 2
+        KeyArray.Capacity += keyCount
+
+        Loop keyCount {
+            key := KVPairs[(A_Index << 1) - 1]
+
+            if !this.Has(key)
+                KeyArray.Push(key)
+        }
+
+        super.Set(KVPairs*)
+
+        return this
+    }
+
+    __Enum(*) {
+        keyEnum := this.KeyArray.__Enum(1)
+
+        keyValEnum(&key := unset, &val := unset) {
+            if keyEnum(&key) {
+                val := this[key]
+                return true
+            } else {
+                return false
+            }
+        }
+
+        return keyValEnum
+    }
 }
 
 /**
@@ -2104,14 +2212,14 @@ OnDisplayChange(wParam, lParam, msg, hwnd) {
  * @param {Integer} bytesRead The number of bytes read from the pipe
  */
 OnKomorebiPipeEvent(msg, bytesRead) {
-    if RegExMatch(msg, '^\{\s*"event"\s*:\s*\{\s*"type"\s*:\s*"([^"]+)"', &eventTypeMatch) {
+    if RegExMatch(msg, '^\{\s*"event"\s*:\s*\{\s*"type"\s*:\s*"([^"]+)"\s*,\s*"content"\s*:\s*([^}]+)\}', &eventTypeMatch) {
         switch eventTypeMatch[1] {
             case "CycleFocusMonitor",
                 "CycleFocusWorkspace",
                 "FocusMonitorNumber",
                 "FocusMonitorWorkspaceNumber",
                 "FocusWorkspaceNumber":
-                OutputDebug(Format("Handling {} event.", eventTypeMatch[1]))
+                OutputDebug(Format("Handling {} event (Content: {}).", eventTypeMatch[1], eventTypeMatch[2]))
                 ; Only run FocusDesktopWorkaround if there is no active window.
                 hwnd := WinActive("A")
                 if (hwnd)
@@ -2174,6 +2282,9 @@ OnProcessExit(lpParameter, bTimerOrWaitFired) {
  * @returns {Integer} 0
  */
 OnScriptExit(exitReason, exitCode) {
+    global ProcessExitCallback
+    global komoPipeListener
+
     ; Only process the following exitReasons
     validReasons := "Logoff Close Exit Reload Single Menu"
 
@@ -2188,8 +2299,11 @@ OnScriptExit(exitReason, exitCode) {
     ; Kill applications
     SGlob.KillApplications()
 
+    ; Unsubscribe from Komorebi IPC events
+    SGlob.Komorebic(Format("unsubscribe-pipe {}", SGlob.KomorebiPipeName))
+
     ; Unregister IPC listener
-    IpcListener.Stop()
+    komoPipeListener.Stop()
 
     ; Return with 0 so other callbacks can run
     return 0
@@ -2251,6 +2365,8 @@ WaitForKomorebiExit() {
 ; Perform additional tasks (if necessary)                                     |
 ; -----------------------------------------------------------------------------
 
+lastMonitorId := 0
+
 SGlob.AdjustTray()
 SGlob.FillIgnoredProcessesGroup()
 SGlob.UpdateAltSnapBlacklistProcesses()
@@ -2272,24 +2388,20 @@ ProcessExitCallback := CallbackCreate(OnProcessExit)
 ; when it exits.
 WaitForKomorebiExit()
 
+; ---
+
 ; Initialize the IPC Pipe Listener
-IpcListener := PipeListener("\\.\pipe\" . SGlob.KomorebiPipeName, 25, 4096)
-IpcListener.OnMessage := (msg, bytesRead) => (OnKomorebiPipeEvent(msg, bytesRead))
-IpcListener.Start()
+komoPipeListener := NamedPipeListener(Format("\\.\pipe\{}", SGlob.KomorebiPipeName), 25, 4096)
+komoPipeListener.OnMessage := OnKomorebiPipeEvent
+komoPipeListener.Start()
 
 ; Subscribe to Komorebi IPC events
-SGlob.Komorebic("subscribe " . SGlob.KomorebiPipeName)
+SGlob.Komorebic(Format("subscribe-pipe {}", SGlob.KomorebiPipeName))
 
 ; ---
 
 ; Run additional programs configured in the ini file
 SGlob.RunAdditionalApplications()
-
-; ---
-
-; Send a broadcast message to all windows to notify them of settings changes.
-; This ensures that certain internals are being called as intended.
-; SGlob.BroadcastWmSettingChange()
 
 ; ---
 
@@ -2882,6 +2994,14 @@ resizeAxisVerticalDecrease(hk) {
 #HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #WheelUp::
 cycleWorkspacePrevious(hk) {
+    global lastMonitorId
+    monitor := SGlob.GetCurrentMonitor()
+    if (monitor.monitorIndex > 0) {
+        if (lastMonitorId != monitor.monitorIndex) {
+            lastMonitorId := monitor.monitorIndex
+            SGlob.Komorebic("focus-monitor-at-cursor")
+        }
+    }
     SGlob.Komorebic("cycle-workspace previous")
 }
 
@@ -2893,6 +3013,14 @@ cycleWorkspacePrevious(hk) {
 #HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #WheelDown::
 cycleWorkspaceNext(hk) {
+    global lastMonitorId
+    monitor := SGlob.GetCurrentMonitor()
+    if (monitor.monitorIndex > 0) {
+        if (lastMonitorId != monitor.monitorIndex) {
+            lastMonitorId := monitor.monitorIndex            
+            SGlob.Komorebic("focus-monitor-at-cursor")
+        }
+    }
     SGlob.Komorebic("cycle-workspace next")
 }
 

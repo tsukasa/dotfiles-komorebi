@@ -89,6 +89,12 @@ Class SGlob {
     static KomoDoPath := SGlob.GetKomoDoPath()
 
     /**
+     * Array of hwnds that are registered as AppBars, so we can unregister them on exit.
+     * @type {Integer[]}
+     */
+    static RegisteredAppBars := []
+
+    /**
      * Array of window handles to restore via pop.
      */
     static WindowStack := []
@@ -195,6 +201,37 @@ Class SGlob {
      */
     static FocusDesktopWorkaround() {
         WinActivate("ahk_class Progman")
+        OutputDebug("[FocusDesktopWorkaround] Focusing Progman!")
+    }
+
+    /**
+     * Creates and focuses a pseudo window as a workaround
+     * for focus issues with Raycast 0.45 and above.
+     */
+    static FocusPseudoWindowWorkaround() {
+        ; Determine what monitor to work on, so we don't
+        ; swap focus around and windows appear on the wrong display.
+        mon := SGlob.GetCurrentMonitor()
+
+        ; Calculate a position just outside the work area.
+        x := mon.workAreaX + mon.workAreaWidth - 1
+        y := mon.workAreaY + mon.workAreaHeight - 1
+
+        OutputDebug(Format("[FocusPseudoWindowWorkaround] Active on monitor {}, creating pseudo window at {}, {}!", mon.monitorIndex, x, y))
+
+        ; Create pseudo gui
+        pseudoGui := Gui()
+        pseudoGui.BackColor := "000000"
+        pseudoGui.Opt("-Caption +ToolWindow +AlwaysOnTop")
+
+        pseudoGui.Show(Format("x{} y{} w1 h1 NoActivate", x, y))
+        
+        ; Focus and destroy the pseudo gui
+        WinActivate("ahk_id " . pseudoGui.Hwnd)
+        Sleep(10)
+
+        pseudoGui.Destroy()
+        OutputDebug("[FocusPseudoWindowWorkaround] Focused pseudo window!")
     }
 
     /**
@@ -207,6 +244,18 @@ Class SGlob {
         MouseGetPos(&mx, &my)
         CoordMode("Mouse", oldValue)
         return SGlob.GetMonitorOfWindow(mx, my)
+    }
+
+    /**
+     * Determines the current monitor based on the cursor position.
+     */
+    static GetCurrentMonitorId(&outputVar) {
+        monitor := SGlob.GetCurrentMonitor()
+        if (monitor.monitorIndex > 0) {
+            if (outputVar != monitor.monitorIndex) {
+                outputVar := monitor.monitorIndex
+            }
+        }
     }
 
     /**
@@ -556,16 +605,54 @@ Class SGlob {
     }
 
     /**
-     * Function to register a window as an AppBar.
-     * NOTE: Requires KomoDo because the AHK implementation is broken and I don't know why...
-     * @param {Hwnd} hwnd Hwnd of the window to register as an AppBar
+     * Registers a window as an AppBar at the top of the screen.
+     * @param {Integer} hwnd Window hwnd to register as an AppBar
      */
     static RegisterHwndAsAppBar(hwnd) {
-        if (!WinWait("ahk_id " . hwnd, , 10))
+        if !WinExist("ahk_id " . hwnd) {
+            OutputDebug(Format("RegisterHwndAsAppBar: Invalid window handle {}.", hwnd))
             return
+        }
 
-        if (SGlob.IsKomoDoAvailable())
-            SGlob.KomoDo("register-appbar " . hwnd)
+        WinGetPos(&x, &y, &w, &h, "ahk_id " . hwnd)
+        if (w = "" || h = "") {
+            OutputDebug(Format("RegisterHwndAsAppBar: Failed to get window rect for hwnd {}.", hwnd))
+            return
+        }
+
+        ABM_NEW := 0
+        ABM_REMOVE := 1
+        ABM_SETPOS := 3
+        ABE_TOP := 1
+
+        ; Ensure previous registration is cleared
+        SGlob.UnregisterHwndAsAppBar(hwnd)
+
+        ; APPBARDATA structure offsets
+        ; Offsets change depending on 32bit or 64bit system...
+        offsetHwnd := (A_PtrSize = 8) ? 8 : 4
+        offsetCallback := offsetHwnd + A_PtrSize
+        offsetEdge := offsetCallback + 4
+        offsetRc := offsetEdge + 4
+        offsetLparam := offsetRc + 16
+        
+        ; Initialize APPBARDATA structure
+        abd := Buffer(offsetLparam + A_PtrSize, 0)
+        NumPut("UInt", abd.Size, abd, 0)                ; cbSize
+        NumPut("Ptr", hwnd, abd, offsetHwnd)            ; hWnd
+        NumPut("UInt", 0, abd, offsetCallback)          ; uCallbackMessage
+        NumPut("UInt", ABE_TOP, abd, offsetEdge)        ; uEdge
+        NumPut("Int", x, abd, offsetRc)                 ; rc.Left
+        NumPut("Int", y, abd, offsetRc + 4)             ; rc.Top
+        NumPut("Int", x + w, abd, offsetRc + 8)         ; rc.Right
+        NumPut("Int", y + h, abd, offsetRc + 12)        ; rc.Bottom
+
+        DllCall("shell32\SHAppBarMessage", "UInt", ABM_NEW, "Ptr", abd, "UInt")
+        DllCall("shell32\SHAppBarMessage", "UInt", ABM_SETPOS, "Ptr", abd, "UInt")
+
+        ; Add the hwnd to the catalogue so it can be unregistered on exit
+        if(!SGlob.RegisteredAppBars.Has(hwnd))
+            SGlob.RegisteredAppBars.Push(hwnd)
     }
 
     /**
@@ -895,6 +982,20 @@ Class SGlob {
         currentBlacklist := Sort(currentBlacklist, "C0 D,")
 
         IniWrite(currentBlacklist, altSnapIniFile, "Blacklist", "Processes")
+    }
+
+    /**
+     * Unregisters a window as an AppBar.
+     * @param {Integer} hwnd Window hwnd to unregister as an AppBar.
+     */
+    static UnregisterHwndAsAppBar(hwnd) {
+        ABM_REMOVE := 1
+
+        offsetHwnd := (A_PtrSize = 8) ? 8 : 4
+        abd := Buffer((offsetHwnd + A_PtrSize + 4 + 4 + 16 + A_PtrSize), 0)
+        NumPut("UInt", abd.Size, abd, 0)      ; cbSize
+        NumPut("Ptr", hwnd, abd, offsetHwnd)  ; hWnd
+        DllCall("shell32\SHAppBarMessage", "UInt", ABM_REMOVE, "Ptr", abd, "UInt")
     }
 }
 
@@ -2227,7 +2328,10 @@ OnKomorebiPipeEvent(msg, bytesRead) {
                 ; This workaround prevents windows from spawning on the wrong workspace.
                 ; Primarily required if you are using Raycast.
                 OutputDebug(Format("No active window detected after {} event, running FocusDesktopWorkaround.", eventTypeMatch[1]))
-                SGlob.FocusDesktopWorkaround()
+                ; Note: Raycast 0.45 does not accept FocusDesktopWorkaround anymore,
+                ;       however creating a pseudo window and focusing it seems to
+                ;       achieve the desired result.
+                SGlob.FocusPseudoWindowWorkaround()
             default: 
                 ;OutputDebug(Format("Ignoring incoming event type: {}", eventTypeMatch[1]))
         }
@@ -2295,6 +2399,11 @@ OnScriptExit(exitReason, exitCode) {
     ; Unregister callbacks
     if (ProcessExitCallback)
         CallbackFree(ProcessExitCallback)
+
+    ; Unregister appbars
+    for barHwnd in SGlob.RegisteredAppBars {
+        SGlob.UnregisterHwndAsAppBar(barHwnd)
+    }
 
     ; Kill applications
     SGlob.KillApplications()
@@ -2365,7 +2474,9 @@ WaitForKomorebiExit() {
 ; Perform additional tasks (if necessary)                                     |
 ; -----------------------------------------------------------------------------
 
+; Pre-determines the monitor where the cursor is initially located.
 lastMonitorId := 0
+SGlob.GetCurrentMonitorId(&lastMonitorId)
 
 SGlob.AdjustTray()
 SGlob.FillIgnoredProcessesGroup()
@@ -2402,6 +2513,12 @@ SGlob.Komorebic(Format("subscribe-pipe {}", SGlob.KomorebiPipeName))
 
 ; Run additional programs configured in the ini file
 SGlob.RunAdditionalApplications()
+
+; ---
+
+; Send a broadcast message to all windows to notify them of settings changes.
+; This ensures that certain internals are being called as intended.
+SGlob.BroadcastWmSettingChange()
 
 ; ---
 
@@ -2707,10 +2824,7 @@ closeWindow(hk){
 #HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #+C::
 centerRegularActiveWindow(hk) {
-    if (SGlob.IsKomoDoAvailable())
-        SGlob.KomoDo("center-active-window")
-    else
-        SGlob.CenterActiveWindow()
+    SGlob.CenterActiveWindow()
 }
 */
 

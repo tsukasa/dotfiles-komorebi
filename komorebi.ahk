@@ -175,9 +175,11 @@ Class SGlob {
     static CheckWorkspaceAndExecute(command, workspace) {
         if (!IsInteger(workspace))
             return
-        if (SGlob.NumberOfWorkspaces >= (workspace + 1)) {
-            SGlob.Komorebic(Format("{} {}", command, workspace))
-        }
+
+        if (SGlob.NumberOfWorkspaces < (workspace + 1))
+            return
+
+        SGlob.Komorebic(Format("{} {}", command, workspace))
     }
 
     /**
@@ -185,13 +187,9 @@ Class SGlob {
      * This is called once at script startup to ensure the group is populated.
      */
     static FillIgnoredProcessesGroup() {
-        if (SGlob.IgnoredProcesses.Length > 0)
-        {
-            for i, process in SGlob.IgnoredProcesses
-            {
-                GroupAdd("KomoIgnoreProcesses", "ahk_exe " . process)
-                OutputDebug("Added ignored process: " . process)
-            }
+        for i, process in SGlob.IgnoredProcesses {
+            GroupAdd("KomoIgnoreProcesses", "ahk_exe " . process)
+            OutputDebug("Added ignored process: " . process)
         }
     }
 
@@ -201,7 +199,7 @@ Class SGlob {
      */
     static FocusDesktopWorkaround() {
         WinActivate("ahk_class Progman")
-        OutputDebug("[FocusDesktopWorkaround] Focusing Progman!")
+        OutputDebug("[FocusDesktopWorkaround] Focused Progman!")
     }
 
     /**
@@ -219,18 +217,19 @@ Class SGlob {
 
         OutputDebug(Format("[FocusPseudoWindowWorkaround] Active on monitor {}, creating pseudo window at {}, {}!", mon.monitorIndex, x, y))
 
-        ; Create pseudo gui
+        ; Create pseudo gui to trap Raycast's window detection
         pseudoGui := Gui()
         pseudoGui.BackColor := "000000"
         pseudoGui.Opt("-Caption +ToolWindow +AlwaysOnTop")
-
         pseudoGui.Show(Format("x{} y{} w1 h1 NoActivate", x, y))
+
+        WinSetTransparent(0, "ahk_id " . pseudoGui.Hwnd)
         
         ; Focus and destroy the pseudo gui
         WinActivate("ahk_id " . pseudoGui.Hwnd)
-        Sleep(10)
-
         pseudoGui.Destroy()
+        pseudoGui := ""
+
         OutputDebug("[FocusPseudoWindowWorkaround] Focused pseudo window!")
     }
 
@@ -251,11 +250,11 @@ Class SGlob {
      */
     static GetCurrentMonitorId(&outputVar) {
         monitor := SGlob.GetCurrentMonitor()
-        if (monitor.monitorIndex > 0) {
-            if (outputVar != monitor.monitorIndex) {
-                outputVar := monitor.monitorIndex
-            }
-        }
+
+        if (monitor.monitorIndex <= 0)
+            return
+
+        &outputVar := monitor.monitorIndex
     }
 
     /**
@@ -265,8 +264,7 @@ Class SGlob {
     static GetIgnoredProcesses() {
         ignoredProcesses := []
         index := 0
-        loop
-        {
+        loop {
             value := SGlob.ReadIniValue("IgnoreProcesses", "Ignore" . index, "")
             if (value = "" || value = "ERROR")
                 break
@@ -311,8 +309,7 @@ Class SGlob {
             monitors := SGlob.WmicObject.ExecQuery("SELECT * FROM Win32_PnPEntity WHERE PNPClass = 'Monitor'")
 
             ; Loop through the monitors and get the device instance paths
-            for (monitor in monitors)
-            {
+            for (monitor in monitors) {
                 deviceID := monitor.PNPDeviceID
 
                 if (IsSet(deviceID))
@@ -339,13 +336,15 @@ Class SGlob {
         monitorsIniSectionContent := IniRead(SGlob.IniFilePath, "Monitors")
 
         loop parse monitorsIniSectionContent, "`n", "`r" {
-            if (InStr(A_LoopField, "=")) {
-                keyValuePair := StrSplit(A_LoopField, "=", , 2)
-                monitorId := keyValuePair[1]
-                devicePath := keyValuePair[2]
+            keyValuePair := StrSplit(A_LoopField, "=", , 2)
 
-                monitorIds.Set(monitorId, devicePath)
-            }
+            if(keyValuePair.Length != 2)
+                continue
+
+            monitorId := keyValuePair[1]
+            devicePath := keyValuePair[2]
+
+            monitorIds.Set(monitorId, devicePath)
         }
 
         return monitorIds
@@ -375,11 +374,8 @@ Class SGlob {
                 &workAreaHeight
             )
 
-            if (
-                windowCenterX >= workAreaX and windowCenterX <= workAreaWidth
-                and
-                windowCenterY >= workAreaY and windowCenterY <= workAreaHeight
-            ) {
+            if (windowCenterX >= workAreaX && windowCenterX <= workAreaWidth &&
+                windowCenterY >= workAreaY && windowCenterY <= workAreaHeight) {
                 monitorIndex := A_Index
                 break
             }
@@ -452,6 +448,15 @@ Class SGlob {
     }
 
     /**
+     * Determines whether a given input is a function.
+     * @param {Func} fn Pointer to a function
+     * @returns {Boolean} True if the input is a function, false otherwise
+     */
+    static IsFunc(fn?) {
+        return (IsSet(fn) && HasMethod(fn))
+    }
+
+    /**
      * Function to check if KomoDo is available
      * @param {String} komodoPath Path to the KomoDo executable
      * @returns {Boolean} True if KomoDo is available, false otherwise
@@ -470,18 +475,20 @@ Class SGlob {
         content := IniRead(SGlob.IniFilePath, "AutoKillApplications")
 
         loop parse, content, "`n", "`r" {
-            if (InStr(A_LoopField, "=")) {
-                keyValuePair := StrSplit(A_LoopField, "=", , 2)
-                applicationName := keyValuePair[1]
-                applicationExecutable := keyValuePair[2]
-                applicationExecutable := StrReplace(applicationExecutable, "`"")
+            keyValuePair := StrSplit(A_LoopField, "=", , 2)
+            
+            if (keyValuePair.Length != 2)
+                continue
+            
+            applicationName := keyValuePair[1]
+            applicationExecutable := keyValuePair[2]
+            applicationExecutable := StrReplace(applicationExecutable, "`"")
 
-                if (ProcessExist(applicationExecutable)) {
-                    OutputDebug(Format("Attempting to kill application {}: {}", applicationName, applicationExecutable))
-                    ProcessClose(applicationExecutable)
-                } else {
-                    OutputDebug(Format("No process found for {}, skipping.", applicationName))
-                }
+            if (ProcessExist(applicationExecutable)) {
+                OutputDebug(Format("Attempting to kill application {}: {}", applicationName, applicationExecutable))
+                ProcessClose(applicationExecutable)
+            } else {
+                OutputDebug(Format("No process found for {}, skipping.", applicationName))
             }
         }
     }
@@ -536,8 +543,7 @@ Class SGlob {
                 argument
             )
 
-            for (proc in SGlob.WmicObject.ExecQuery(query))
-            {
+            for (proc in SGlob.WmicObject.ExecQuery(query)) {
                 pid := proc.ProcessId
                 listOfPids.Push(pid)
             }
@@ -715,18 +721,20 @@ Class SGlob {
         content := IniRead(SGlob.IniFilePath, "AutoRunApplications")
 
         loop parse, content, "`n", "`r" {
-            if (InStr(A_LoopField, "=")) {
-                keyValuePair := StrSplit(A_LoopField, "=", , 2)
-                applicationName := keyValuePair[1]
-                applicationPath := keyValuePair[2]
-                applicationPath := SGlob.ResolveEnvironmentVariables(applicationPath)
-                applicationPath := StrReplace(applicationPath, "`"")
+            keyValuePair := StrSplit(A_LoopField, "=", , 2)
 
-                SplitPath(applicationPath, &applicationExecutable)
+            if (keyValuePair.Length != 2)
+                continue
 
-                if (FileExist(applicationPath) && !ProcessExist(applicationExecutable)) {
-                    Run(applicationPath)
-                }
+            applicationName := keyValuePair[1]
+            applicationPath := keyValuePair[2]
+            applicationPath := SGlob.ResolveEnvironmentVariables(applicationPath)
+            applicationPath := StrReplace(applicationPath, "`"")
+
+            SplitPath(applicationPath, &applicationExecutable)
+
+            if (FileExist(applicationPath) && !ProcessExist(applicationExecutable)) {
+                Run(applicationPath)
             }
         }
     }
@@ -816,9 +824,7 @@ Class SGlob {
                     OutputDebug("Monitor " . monitorConfigNumber . " not connected, closing bar with PID " . currentBarPid)
                     ProcessClose(currentBarPid)
                 }
-            }
-
-            if (monitorConnected) {
+            } else {
                 ; Monitor connected and at least one bar is already active
                 if (barPidOfMonitor[1] != -1) {
                     OutputDebug("Bar already running for monitor " . monitorConfigNumber . " with PID " . barPidOfMonitor[1])
@@ -908,49 +914,24 @@ Class SGlob {
      * Optionally allows to specify a PID to wait for.
      * @param {Integer} pidToWaitFor The process ID to wait for before touching the configuration
      */
-    static TouchKomorebiBarConfig(pidToWaitFor := -1) {
+    static TouchKomorebiBarConfig(pidToWaitFor := -1, processNameToWaitFor := "komorebi-bar.exe", filePattern := "komorebi.bar.monitor*.json") {
         if (SGlob.NoBarMode)
             return
 
         ; It would be nicer to grab the PID and use WinExist or WinWait
-        ; with ahk_oud, however this approach does not work with
+        ; with ahk_pid, however this approach does not work with
         ; Scoop's shim executables.
         ; Instead of overcomplicating things, we'll just wait 500ms.
         if (pidToWaitFor == -1)
-            ProcessWait("komorebi-bar.exe", 10)
+            ProcessWait(processNameToWaitFor, 10)
         else
             ProcessWait(pidToWaitFor, 10)
 
-        if (ProcessExist("komorebi-bar.exe")) {
+        if (ProcessExist(processNameToWaitFor)) {
             Sleep 500
             FileSetTime(
                 A_Now,
-                Format("{}\komorebi.bar.monitor*.json", A_ScriptDir)
-            )
-        }
-    }
-
-    /**
-     * Touch komorebi-bar's configuration to force a hot-reload...
-     * Otherwise the bar is too big... (yeah really!)
-     * Optionally allows to specify a PID to wait for.
-     * @param {Integer} pidToWaitFor The process ID to wait for before touching the configuration
-     */
-    static TouchKomorebiConfig(pidToWaitFor := -1) {
-        ; It would be nicer to grab the PID and use WinExist or WinWait
-        ; with ahk_oud, however this approach does not work with
-        ; Scoop's shim executables.
-        ; Instead of overcomplicating things, we'll just wait 500ms.
-        if (pidToWaitFor == -1)
-            ProcessWait("komorebi-bar.exe", 10)
-        else
-            ProcessWait(pidToWaitFor, 10)
-
-        if (ProcessExist("komorebi-bar.exe")) {
-            Sleep 500
-            FileSetTime(
-                A_Now,
-                Format("{}\komorebi.json", A_ScriptDir)
+                Format("{}\{}", A_ScriptDir, filePattern)
             )
         }
     }
@@ -969,8 +950,7 @@ Class SGlob {
 
         currentBlacklist := IniRead(altSnapIniFile, "Blacklist", "Processes", "")
 
-        for process in SGlob.IgnoredProcesses
-        {
+        for process in SGlob.IgnoredProcesses {
             if !InStr(currentBlacklist, process)
             {
                 if (currentBlacklist != "")
@@ -1136,7 +1116,7 @@ Class HotkeyListHelper {
         if (!this.IsGuiVisible)
             return
 
-        OutputDebug("Hiding hotkey list window...")
+        OutputDebug("Hiding Hotkey List window.")
 
         this.IsGuiVisible := false
         this.hotkeyGui.Hide()
@@ -1247,15 +1227,6 @@ Class HotkeyListHelper {
     }
 
     /**
-     * Determines whether a given input is a function.
-     * @param {Func} fn Pointer to a function
-     * @returns {Boolean} True if the input is a function, false otherwise
-     */
-    IsFunc(fn?) {
-        return (IsSet(fn) && HasMethod(fn))
-    }
-
-    /**
      * Joins an array of string elements with a delimiter
      * @param {String[]} arr Array of string elements to join
      * @param {String} delimiter The delimiter to use between elements
@@ -1290,8 +1261,8 @@ Class HotkeyListHelper {
 
             function := selectedHotkey.functionName
 
-            if(this.IsFunc(%function%?))
-                %function%(selectedHotkey.rawhotkey)
+            if(SGlob.IsFunc(%function%?))
+                %function%.Call(selectedHotkey.rawhotkey)
         }
     }
 
@@ -1434,7 +1405,7 @@ Class HotkeyListHelper {
                 }
             }
             
-            if (!ignore && this.IsFunc(%hotkeyMatch.functionName%?)) {
+            if (!ignore && SGlob.IsFunc(%hotkeyMatch.functionName%?)) {
                 this.hotkeys.Push({
                     rawhotkey: hotkeyMatch.hotkey,
                     hotkey: this.FormatHotkeyName(Trim(hotkeyMatch.hotkey)),
@@ -1471,7 +1442,7 @@ Class HotkeyListHelper {
         if (this.IsGuiVisible)
             return
 
-        OutputDebug("Showing Hotkey List window...")
+        OutputDebug("Showing Hotkey List window.")
 
         ; Calculate window dimensions
         w := 800
@@ -1579,7 +1550,7 @@ Class NamedPipeListener {
 		this._connected := false
 		this._connecting := true
 		OutputDebug(Format("[NamedPipeListener] Waiting for client on {}...", this.PipeName))
-		this._ConnectPipeNonBlocking(this.Handle)
+		this._ConnectPipe(this.Handle)
 		this._timer := ObjBindMethod(this, "_Tick")
 		this._SetTimerInterval(this.IdlePollMs)
 	}
@@ -1589,7 +1560,7 @@ Class NamedPipeListener {
      */
 	Stop() {
 		if (this._timer) {
-			SetTimer this._timer, 0
+			SetTimer(this._timer, 0)
 			this._timer := 0
 		}
 		this._ClosePipe(this.Handle)
@@ -1603,37 +1574,32 @@ Class NamedPipeListener {
      */
 	_Tick() {
 		if (this._connecting && !this._connected) {
-			if !this._CheckConnected() {
+			if (!this._CheckConnected())
 				return
-			}
-			OutputDebug("[NamedPipeListener] Client connected. Listening for data...")
+			OutputDebug("[NamedPipeListener] Client connected. Listening for data.")
 			this._SetTimerInterval(this.PollMs)
 		}
 
-		if !this._connected {
+		if (!this._connected)
 			return
-		}
 
 		msg := ""
 		bytesRead := 0
-		status := this._ReadPipeMessageNonBlocking(this.Handle, this.BufSize, &msg, &bytesRead)
-		if (status = 0) {
+		status := this._ReadPipeMessage(this.Handle, this.BufSize, &msg, &bytesRead)
+
+        if (status = 0) {
 			OutputDebug("[NamedPipeListener] Pipe closed by client.")
 			this.Stop()
 			ExitApp
 		}
-		if (status < 0) {
+
+        if (status < 0) {
 			this._Fail(Format("[NamedPipeListener] ReadFile failed. Error: {}", -status))
 		}
-		if (bytesRead > 0) {
-			cb := this.OnMessage
-			if (IsObject(cb)) {
-				if (cb.MaxParams >= 2) {
-					cb.Call(msg, bytesRead)
-				} else {
-					cb.Call(msg)
-				}
-			}
+
+        if (bytesRead > 0) {			
+            if (SGlob.IsFunc(this.OnMessage))
+                this.OnMessage.Call(msg, bytesRead)
 		}
 	}
 
@@ -1680,7 +1646,7 @@ Class NamedPipeListener {
 		if (this._timerInterval = ms) {
 			return
 		}
-		SetTimer this._timer, ms
+		SetTimer(this._timer, ms)
 		this._timerInterval := ms
 	}
 
@@ -1688,7 +1654,7 @@ Class NamedPipeListener {
      * Internal method to start an overlapped connect to avoid blocking the main thread.
      * @param {Ptr} handle The handle to the named pipe.
      */
-	_ConnectPipeNonBlocking(handle) {
+	_ConnectPipe(handle) {
 		; Start an overlapped connect to avoid blocking the main thread.
 		ERROR_PIPE_CONNECTED := 535
 		ERROR_IO_PENDING := 997
@@ -1725,26 +1691,24 @@ Class NamedPipeListener {
 		WAIT_TIMEOUT := 258
 		ERROR_IO_INCOMPLETE := 996
 
-		if !this._connectEvent {
+		if (!this._connectEvent)
 			return false
-		}
 
+        bytes := 0
 		wait := DllCall("WaitForSingleObject", "ptr", this._connectEvent, "uint", 0, "uint")
         
-		if (wait = WAIT_TIMEOUT) {
+		if (wait = WAIT_TIMEOUT)
 			return false
-		}
-		if (wait != WAIT_OBJECT_0) {
+		if (wait != WAIT_OBJECT_0)
 			this._Fail(Format("WaitForSingleObject failed. Error: {}", DllCall("GetLastError", "uint")))
-		}
 
-		bytes := 0
-		if !DllCall("GetOverlappedResult", "ptr", this.Handle, "ptr", this._ovl, "uint*", &bytes, "int", 0) {
+		if (!DllCall("GetOverlappedResult", "ptr", this.Handle, "ptr", this._ovl, "uint*", &bytes, "int", 0)) {
 			err := DllCall("GetLastError", "uint")
-			if (err = ERROR_IO_INCOMPLETE) {
+			
+            if (err = ERROR_IO_INCOMPLETE)
 				return false
-			}
-			this._Fail(Format("GetOverlappedResult failed. Error: {}", err))
+			
+            this._Fail(Format("GetOverlappedResult failed. Error: {}", err))
 		}
 
 		this._connected := true
@@ -1761,118 +1725,82 @@ Class NamedPipeListener {
      * @returns {Integer} 1 if the message was read successfully, 0 if the pipe was closed by the client, or a negative error code if an error occurred.
      */
 	_ReadPipeMessage(handle, bufSize, &message, &bytesRead) {
-		; Collect an entire message to avoid splitting output across reads.
-		ERROR_MORE_DATA := 234
-		ERROR_BROKEN_PIPE := 109
-
-		buf := this._readBuf
-		if (buf.Size != bufSize) {
-			buf := Buffer(bufSize, 0)
-			this._readBuf := buf
-		}
-		chunks := []
-		total := 0
-
-		loop {
-			readNow := 0
-			ok := DllCall("ReadFile", "ptr", handle, "ptr", buf, "uint", bufSize, "uint*", &readNow, "ptr", 0)
-			if !ok {
-				err := DllCall("GetLastError", "uint")
-				if (err = ERROR_BROKEN_PIPE) {
-					return 0
-				}
-				if (err != ERROR_MORE_DATA) {
-					return -err
-				}
-			}
-
-			if (readNow > 0) {
-				chunk := Buffer(readNow, 0)
-				DllCall("RtlMoveMemory", "ptr", chunk, "ptr", buf, "uptr", readNow)
-				chunks.Push(chunk)
-				total += readNow
-			}
-
-			if ok {
-				break
-			}
-		}
-
-		bytesRead := total
-		if (total = 0) {
-			message := ""
-			return 1
-		}
-
-		msgBuf := Buffer(total, 0)
-		offset := 0
-		for chunk in chunks {
-			DllCall("RtlMoveMemory", "ptr", msgBuf.Ptr + offset, "ptr", chunk, "uptr", chunk.Size)
-			offset += chunk.Size
-		}
-
-		message := StrGet(msgBuf, total, "UTF-8")
-		return 1
+        return this._ReadPipeMessageCore(handle, bufSize, &message, &bytesRead, true)
 	}
 
-    /**
-     * Internal method to read a message from the pipe without blocking, using PeekNamedPipe to check for available data and handling cases where the message may be larger than the buffer size.
-     * @param {Ptr} handle The handle to the named pipe to read from.
-     * @param {Integer} bufSize The size of the buffer to use for each read operation.
-     * @param {Ref} message A reference variable to store the complete message read from the pipe.
-     * @param {Ref} bytesRead A reference variable to store the total number of bytes read from the pipe.
-     * @returns {Integer} 1 if the message was read successfully, 0 if the pipe was closed by the client, or a negative error code if an error occurred.
-     */
-	_ReadPipeMessageNonBlocking(handle, bufSize, &message, &bytesRead) {
-		; Use PeekNamedPipe to avoid blocking when no data is available.
-		ERROR_NO_DATA := 232
-		ERROR_MORE_DATA := 234
-		ERROR_BROKEN_PIPE := 109
+    _ReadPipeMessageCore(handle, bufSize, &message, &bytesRead, nonBlocking := true) {
+        ; Read a full message, optionally checking availability first.
+        ERROR_NO_DATA := 232
+        ERROR_MORE_DATA := 234
+        ERROR_BROKEN_PIPE := 109
 
-		avail := 0
-		if !DllCall("PeekNamedPipe", "ptr", handle, "ptr", 0, "uint", 0, "uint*", 0, "uint*", &avail, "uint*", 0) {
-			err := DllCall("GetLastError", "uint")
-			if (err = ERROR_BROKEN_PIPE) {
-				return 0
-			}
-			if (err = ERROR_NO_DATA) {
-				bytesRead := 0
-				message := ""
-				return 1
-			}
-			return -err
-		}
+        if (nonBlocking) {
+            avail := 0
+            if !DllCall("PeekNamedPipe", "ptr", handle, "ptr", 0, "uint", 0, "uint*", 0, "uint*", &avail, "uint*", 0) {
+                err := DllCall("GetLastError", "uint")
+                if (err = ERROR_BROKEN_PIPE) {
+                    return 0
+                }
+                if (err = ERROR_NO_DATA) {
+                    bytesRead := 0
+                    message := ""
+                    return 1
+                }
+                return -err
+            }
 
-		if (avail = 0) {
-			bytesRead := 0
-			message := ""
-			return 1
-		}
+            if (avail = 0) {
+                bytesRead := 0
+                message := ""
+                return 1
+            }
+        }
 
-		if (avail <= bufSize) {
-			buf := this._readBuf
-			if (buf.Size != bufSize) {
-				buf := Buffer(bufSize, 0)
-				this._readBuf := buf
-			}
-			readNow := 0
-			ok := DllCall("ReadFile", "ptr", handle, "ptr", buf, "uint", bufSize, "uint*", &readNow, "ptr", 0)
-			if !ok {
-				err := DllCall("GetLastError", "uint")
-				if (err = ERROR_MORE_DATA) {
-					return this._ReadPipeMessage(handle, bufSize, &message, &bytesRead)
-				}
-				if (err = ERROR_BROKEN_PIPE) {
-					return 0
-				}
-				return -err
-			}
-			bytesRead := readNow
-			message := (readNow > 0) ? StrGet(buf, readNow, "UTF-8") : ""
-			return 1
-		}
+        buf := this._readBuf
+        if (buf.Size != bufSize) {
+            buf := Buffer(bufSize, 0)
+            this._readBuf := buf
+        }
 
-		return this._ReadPipeMessage(handle, bufSize, &message, &bytesRead)
+        msgBuf := 0
+        total := 0
+
+        loop {
+            readNow := 0
+            
+            ok := DllCall("ReadFile", "ptr", handle, "ptr", buf, "uint", bufSize, "uint*", &readNow, "ptr", 0)
+            
+            if (!ok) {
+                err := DllCall("GetLastError", "uint")
+                if (err = ERROR_BROKEN_PIPE)
+                    return 0
+                if (err != ERROR_MORE_DATA)
+                    return -err
+            }
+
+            if (readNow > 0) {
+                newTotal := total + readNow
+            
+                if (!IsObject(msgBuf)) {
+                    msgBuf := Buffer(newTotal, 0)
+                } else if (msgBuf.Size < newTotal) {
+                    newBuf := Buffer(newTotal, 0)
+                    DllCall("RtlMoveMemory", "ptr", newBuf, "ptr", msgBuf, "uptr", total)
+                    msgBuf := newBuf
+                }
+
+                DllCall("RtlMoveMemory", "ptr", msgBuf.Ptr + total, "ptr", buf, "uptr", readNow)
+                
+                total := newTotal
+            }
+
+            if (ok)
+                break
+        }
+
+        bytesRead := total
+        message := (total > 0) ? StrGet(msgBuf, total, "UTF-8") : ""
+        return 1
 	}
 
     /**
@@ -1884,11 +1812,14 @@ Class NamedPipeListener {
 			DllCall("DisconnectNamedPipe", "ptr", handle)
 			DllCall("CloseHandle", "ptr", handle)
 		}
-		if (this._connectEvent) {
+		
+        if (this._connectEvent) {
 			DllCall("CloseHandle", "ptr", this._connectEvent)
 			this._connectEvent := 0
 		}
-		this._timerInterval := 0
+		
+        this._timerInterval := 0
+        OutputDebug("[NamedPipeListener] Pipe closed.")
 	}
 
     /**
@@ -2327,11 +2258,13 @@ OnKomorebiPipeEvent(msg, bytesRead) {
                     return
                 ; This workaround prevents windows from spawning on the wrong workspace.
                 ; Primarily required if you are using Raycast.
-                OutputDebug(Format("No active window detected after {} event, running FocusDesktopWorkaround.", eventTypeMatch[1]))
+                OutputDebug(Format("No active window detected after {} event, running FocusPseudoWindowWorkaround.", eventTypeMatch[1]))
                 ; Note: Raycast 0.45 does not accept FocusDesktopWorkaround anymore,
                 ;       however creating a pseudo window and focusing it seems to
                 ;       achieve the desired result.
                 SGlob.FocusPseudoWindowWorkaround()
+                ; Focus desktop anyway to ensure taskbar auto-hide works properly.
+                SGlob.FocusDesktopWorkaround()
             default: 
                 ;OutputDebug(Format("Ignoring incoming event type: {}", eventTypeMatch[1]))
         }

@@ -31,10 +31,17 @@ OnExit(OnScriptExit)
  */
 Class SGlob {
     /**
-     * Path to the INI configuration file for this script
+     * Path to the INI configuration file for this script.
+     * IMPORTANT: This value needs to be the first in SGlob.
      * @type {String}
      */
     static IniFilePath := Format("{}\komorebi-ahk.ini", A_ScriptDir)
+
+    /**
+     * Whether to handle cursor repositioning when changing monitors
+     * @type {Boolean}
+     */
+    static HandleCursorOnMonitorChange := SGlob.ReadIniValue("Settings", "HandleCursorOnMonitorChange", "true") == "true"
 
     /**
      * Holds the list of ignored processes that should not be managed by Komorebi.
@@ -149,10 +156,10 @@ Class SGlob {
         activeWinPos := SGlob.GetWindowCenter(activeWindow)
 
         ; Get the monitor the window is on based on the center of the window
-        winMonitor := SGlob.GetMonitorOfWindow(activeWinPos.centerX, activeWinPos.centerY)
+        winMonitor := SGlob.GetMonitorByXYCoord(activeWinPos.centerX, activeWinPos.centerY)
 
         ; If invalid monitor index: return
-        if (winMonitor.monitorIndex = -1)
+        if (winMonitor = -1)
             return
 
         ; Calculate new position to center the window
@@ -209,7 +216,12 @@ Class SGlob {
     static FocusPseudoWindowWorkaround() {
         ; Determine what monitor to work on, so we don't
         ; swap focus around and windows appear on the wrong display.
-        mon := SGlob.GetCurrentMonitor()
+        mon := SGlob.GetCurrentMonitorByCursorPosition()
+
+        if (mon == -1) {
+            OutputDebug("[FocusPseudoWindowWorkaround] Failed to get current monitor based on cursor position.")
+            return
+        }
 
         ; Calculate a position just outside the work area.
         x := mon.workAreaX + mon.workAreaWidth - 1
@@ -238,21 +250,22 @@ Class SGlob {
      * This method retrieves the coordinates of the mouse cursor and determines which monitor it is on.
      * @returns {Object} The monitor index and work area dimensions
      */
-    static GetCurrentMonitor() {
+    static GetCurrentMonitorByCursorPosition() {
         oldValue := CoordMode("Mouse", "Screen")
         MouseGetPos(&mx, &my)
         CoordMode("Mouse", oldValue)
-        return SGlob.GetMonitorOfWindow(mx, my)
+        return SGlob.GetMonitorByXYCoord(mx, my)
     }
 
     /**
      * Determines the current monitor based on the cursor position.
      */
-    static GetCurrentMonitorId(&outputVar) {
-        monitor := SGlob.GetCurrentMonitor()
+    static GetCurrentMonitorNum(&outputVar) {
+        monitor := SGlob.GetCurrentMonitorByCursorPosition()
 
-        if (monitor.monitorIndex <= 0)
-            return
+        ; No monitor found - why?
+        if (monitor == -1)
+            return -1
 
         &outputVar := monitor.monitorIndex
     }
@@ -351,20 +364,48 @@ Class SGlob {
     }
 
     /**
-     * Function to get the monitor the window is on based on the center of the window
-     * @param {Integer} windowCenterX
-     * @param {Integer} windowCenterY 
+     * Function to get the monitor based on a given set of X and Y coordinates.
+     * @param {Integer} xCoord The X coordinate to check
+     * @param {Integer} yCoord The Y coordinate to check
      * @returns {Object} The monitor index and work area dimensions
      */
-    static GetMonitorOfWindow(windowCenterX, windowCenterY) {
-        ; Get number of monitors - but only ones used for the desktop!
+    static GetMonitorByXYCoord(xCoord, yCoord) {
+        monitors := SGlob.GetMonitors()
+
+        ; We need two iterations here.
+        ; The first run checks whether the coordinates are within any
+        ; of the monitors' work areas. This does not necessarily produce
+        ; a result if we are checking against the cursor's screen coordinates.
+        ; These might be outside of any monitor's work area.
+        ; So the second loop will clamp the coordinates to the nearest point
+        ; within the work areas and check again.
+        loop (2) {
+            checkLoop := A_Index
+            for (monitor in monitors) {
+                cx := xCoord
+                cy := yCoord
+
+                ; Clamp check values on second iteration because
+                ; we did not find a match yet...
+                if (checkLoop == 2) {
+                    cx := Max(monitor.workAreaX, Min(xCoord, monitor.workAreaX + monitor.workAreaWidth))
+                    cy := Max(monitor.workAreaY, Min(yCoord, monitor.workAreaY + monitor.workAreaHeight))
+                }
+
+                if (cx >= monitor.workAreaX && cx <= monitor.workAreaWidth &&
+                    cy >= monitor.workAreaY && cy <= monitor.workAreaHeight) {
+                    return monitor
+                }
+            }
+        }
+
+        return -1
+    }
+
+    static GetMonitors() {
+        monitors := []
         monitorCount := SysGet(WinuserConstants.SM_CMONITORS)
 
-        ; Set initial value to check if we found the monitor the window is on...
-        monitorIndex := -1
-
-        ; Loop through each monitor to find which one the window is on...
-        ; Do this by checking on which monitor the center of the window is, otherwise we get false positives.
         loop (monitorCount) {
             MonitorGetWorkArea(
                 A_Index,
@@ -374,20 +415,16 @@ Class SGlob {
                 &workAreaHeight
             )
 
-            if (windowCenterX >= workAreaX && windowCenterX <= workAreaWidth &&
-                windowCenterY >= workAreaY && windowCenterY <= workAreaHeight) {
-                monitorIndex := A_Index
-                break
-            }
+            monitors.Push({
+                monitorIndex: A_Index,
+                workAreaX: workAreaX,
+                workAreaY: workAreaY,
+                workAreaWidth: workAreaWidth,
+                workAreaHeight: workAreaHeight
+            })
         }
 
-        return {
-            monitorIndex: monitorIndex,
-            workAreaX: workAreaX,
-            workAreaY: workAreaY,
-            workAreaWidth: workAreaWidth,
-            workAreaHeight: workAreaHeight
-        }
+        return monitors
     }
 
     /**
@@ -870,6 +907,37 @@ Class SGlob {
                     SGlob.RegisterHwndAsAppBar(barHwnd)
             }
         }
+    }
+
+    /**
+     * Sets the mouse cursor to the center of the specified monitor.
+     * Does not touch the cursor if it's already on the specified monitor.
+     * Also does nothing if the specified monitor number is out of bounds.
+     * @param {Integer} monitorNum Monitor number to set the cursor on (1-based index)
+     */
+    static SetCursorToMonitorNum(monitorNum) {
+        monitors := SGlob.GetMonitors()
+        currentMonitor := SGlob.GetCurrentMonitorByCursorPosition()
+
+        if (currentMonitor = -1) {
+            OutputDebug("SetCursorToMonitorNum: Failed to get current monitor based on cursor position.")
+            return
+        }
+
+        if (monitorNum == currentMonitor.monitorIndex)
+            return
+
+        if (monitorNum < 1 || monitorNum > monitors.Length)
+            return
+
+        oldValue := CoordMode("Mouse", "Screen")
+        monitor := monitors[monitorNum]
+
+        newX := monitor.workAreaX + ((monitor.workAreaWidth - monitor.workAreaX) // 2)
+        newY := monitor.workAreaY + ((monitor.workAreaHeight - monitor.workAreaY) // 2)
+
+        MouseMove(newX, newY)
+        CoordMode("Mouse", oldValue)
     }
 
     /**
@@ -1447,7 +1515,7 @@ Class HotkeyListHelper {
         ; Calculate window dimensions
         w := 800
         h := 250
-        mon := SGlob.GetCurrentMonitor()
+        mon := SGlob.GetCurrentMonitorByCursorPosition()
 
         ; Calculate centered position
         x := mon.workAreaX + ((mon.workAreaWidth - mon.workAreaX) - w) // 2
@@ -2252,6 +2320,39 @@ OnKomorebiPipeEvent(msg, bytesRead) {
                 "FocusMonitorWorkspaceNumber",
                 "FocusWorkspaceNumber":
                 OutputDebug(Format("Handling {} event (Content: {}).", eventTypeMatch[1], eventTypeMatch[2]))
+
+                eventName := eventTypeMatch[1]
+                eventValue := eventTypeMatch[2]
+
+                ; Remove the Json array brackets
+                if (SubStr(eventValue, 1, 1) = "[")
+                    eventValue := SubStr(eventValue, 2, -1)
+
+                if (eventName == "FocusMonitorNumber" ||
+                    eventName == "FocusMonitorWorkspaceNumber") {
+                    ; Initialize
+                    monitorNumber := ""
+
+                    switch (eventName) {
+                        case "FocusMonitorNumber":
+                            monitorNumber := eventValue
+                        case "FocusMonitorWorkspaceNumber":
+                            monitorNumber := StrSplit(eventValue, ",", , 2)[1]
+                    }
+
+                    if (!IsNumber(monitorNumber)) {
+                        OutputDebug(Format("Invalid monitor number received in FocusMonitorNumber event: {}. Skipping workaround.", monitorNumber))
+                        return
+                    }
+
+                    ; Convert from 0-indexed to 1-indexed
+                    monitorNumber := monitorNumber + 1
+
+                    ; Set cursor position, if enabled
+                    if (SGlob.HandleCursorOnMonitorChange)
+                        SGlob.SetCursorToMonitorNum(monitorNumber)
+                }
+
                 ; Only run FocusDesktopWorkaround if there is no active window.
                 hwnd := WinActive("A")
                 if (hwnd)
@@ -2347,6 +2448,8 @@ OnScriptExit(exitReason, exitCode) {
     ; Unregister IPC listener
     komoPipeListener.Stop()
 
+    OutputDebug(Format("{} / Script exiting with reason: `"{}`" and code: {}", FormatTime(, "yyyy-MM-dd, HH:mm:ss"), exitReason, exitCode))
+
     ; Return with 0 so other callbacks can run
     return 0
 }
@@ -2407,18 +2510,28 @@ WaitForKomorebiExit() {
 ; Perform additional tasks (if necessary)                                     |
 ; -----------------------------------------------------------------------------
 
+; Debugging output to pinpoint performance issues. Please leave this in!
+OutputDebug(Format("{} / SCRIPT INIT START", FormatTime(, "yyyy-MM-dd, HH:mm:ss")))
+
 ; Pre-determines the monitor where the cursor is initially located.
-lastMonitorId := 0
-SGlob.GetCurrentMonitorId(&lastMonitorId)
+lastMonitorId := -1
+SGlob.GetCurrentMonitorNum(&lastMonitorId)
+OutputDebug(Format("{} / Finished GetCurrentMonitorNum", FormatTime(, "yyyy-MM-dd, HH:mm:ss")))
 
 SGlob.AdjustTray()
+OutputDebug(Format("{} / Finished AdjustTray", FormatTime(, "yyyy-MM-dd, HH:mm:ss")))
+
 SGlob.FillIgnoredProcessesGroup()
+OutputDebug(Format("{} / Finished FillIgnoredProcessesGroup", FormatTime(, "yyyy-MM-dd, HH:mm:ss")))
+
 SGlob.UpdateAltSnapBlacklistProcesses()
+OutputDebug(Format("{} / Finished UpdateAltSnapBlacklistProcesses", FormatTime(, "yyyy-MM-dd, HH:mm:ss")))
 
 /**
  * Initialize the Hotkey List helper window
  */
 hkHelper := HotkeyListHelper()
+OutputDebug(Format("{} / Finished HotkeyListHelper init", FormatTime(, "yyyy-MM-dd, HH:mm:ss")))
 
 /**
  * Since Komorebi does not close the AutoHotkey script despite using the --ahk
@@ -2427,10 +2540,12 @@ hkHelper := HotkeyListHelper()
  * @type {Integer}
  */
 ProcessExitCallback := CallbackCreate(OnProcessExit)
+OutputDebug(Format("{} / Finished ProcessExitCallback creation", FormatTime(, "yyyy-MM-dd, HH:mm:ss")))
 
 ; Check if Komorebi is running and register a callback to be notified
 ; when it exits.
 WaitForKomorebiExit()
+OutputDebug(Format("{} / Finished WaitForKomorebiExit", FormatTime(, "yyyy-MM-dd, HH:mm:ss")))
 
 ; ---
 
@@ -2438,20 +2553,25 @@ WaitForKomorebiExit()
 komoPipeListener := NamedPipeListener(Format("\\.\pipe\{}", SGlob.KomorebiPipeName), 25, 4096)
 komoPipeListener.OnMessage := OnKomorebiPipeEvent
 komoPipeListener.Start()
+OutputDebug(Format("{} / Finished Named Pipe Listener init", FormatTime(, "yyyy-MM-dd, HH:mm:ss")))
 
 ; Subscribe to Komorebi IPC events
 SGlob.Komorebic(Format("subscribe-pipe {}", SGlob.KomorebiPipeName))
+OutputDebug(Format("{} / Finished komorebic subscribe-pipe", FormatTime(, "yyyy-MM-dd, HH:mm:ss")))
 
 ; ---
 
 ; Run additional programs configured in the ini file
 SGlob.RunAdditionalApplications()
+OutputDebug(Format("{} / Finish RunAdditionalApplications", FormatTime(, "yyyy-MM-dd, HH:mm:ss")))
 
 ; ---
 
+; TODO: Can delay startup significantly, figure out why!
 ; Send a broadcast message to all windows to notify them of settings changes.
 ; This ensures that certain internals are being called as intended.
-SGlob.BroadcastWmSettingChange()
+;SGlob.BroadcastWmSettingChange()
+;OutputDebug(Format("{} / Finished BroadcastWmSettingChange", FormatTime(, "yyyy-MM-dd, HH:mm:ss")))
 
 ; ---
 
@@ -2459,12 +2579,14 @@ SGlob.BroadcastWmSettingChange()
 ; Normally, this happens on WM_DISPLAYCHANGE, however for the initial
 ; startup, we need to do this manually.
 SGlob.RegisterKomorebiBarsAsAppBars()
+OutputDebug(Format("{} / Finished RegisterKomorebiBarsAsAppBars", FormatTime(, "yyyy-MM-dd, HH:mm:ss")))
 
 ; -----------------------------------------------------------------------------
 ; Workarounds                                                                 |
 ; -----------------------------------------------------------------------------
 
 SGlob.TouchKomorebiBarConfig()
+OutputDebug(Format("{} / Finished TouchKomorebiBarConfig", FormatTime(, "yyyy-MM-dd, HH:mm:ss")))
 
 ; -----------------------------------------------------------------------------
 ; Basic Options                                                               |
@@ -2472,6 +2594,9 @@ SGlob.TouchKomorebiBarConfig()
 
 ; Enable hot reloading of changes to this file
 SGlob.Komorebic("watch-configuration enable")
+OutputDebug(Format("{} / Finished komorebic watch-configuration enable", FormatTime(, "yyyy-MM-dd, HH:mm:ss")))
+
+OutputDebug(Format("{} / SCRIPT INIT FINISHED!", FormatTime(, "yyyy-MM-dd, HH:mm:ss")))
 
 ; The rest of the Komorebi settings should be set in the configuration file.
 ; Do NOT set application overrides here, use the configuration file instead!
@@ -3042,8 +3167,8 @@ resizeAxisVerticalDecrease(hk) {
 #WheelUp::
 cycleWorkspacePrevious(hk) {
     global lastMonitorId
-    monitor := SGlob.GetCurrentMonitor()
-    if (monitor.monitorIndex > 0) {
+    monitor := SGlob.GetCurrentMonitorByCursorPosition()
+    if (monitor != -1) {
         if (lastMonitorId != monitor.monitorIndex) {
             lastMonitorId := monitor.monitorIndex
             SGlob.Komorebic("focus-monitor-at-cursor")
@@ -3061,8 +3186,8 @@ cycleWorkspacePrevious(hk) {
 #WheelDown::
 cycleWorkspaceNext(hk) {
     global lastMonitorId
-    monitor := SGlob.GetCurrentMonitor()
-    if (monitor.monitorIndex > 0) {
+    monitor := SGlob.GetCurrentMonitorByCursorPosition()
+    if (monitor != -1) {
         if (lastMonitorId != monitor.monitorIndex) {
             lastMonitorId := monitor.monitorIndex            
             SGlob.Komorebic("focus-monitor-at-cursor")

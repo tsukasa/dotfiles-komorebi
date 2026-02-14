@@ -242,7 +242,7 @@
   ],
 
   // Without m_f_f, switching workspaces happens on the monitor where the mouse is.
-  "mouse_follows_focus": true,
+  "mouse_follows_focus": false,
 
   "resize_delta": 50,
 

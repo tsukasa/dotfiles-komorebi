@@ -51,11 +51,6 @@ Class SGlob {
     static IgnoredProcesses := SGlob.GetIgnoredProcesses()
 
     /**
-     * Queue of the PIDs of the Komorebi Bar processes that need to be touched.
-     */
-    static KomorebiBarTouchConfigQueue := []
-
-    /**
      * Name of the pipe used for communication with Komorebi.
      * @type {String}
      */
@@ -68,32 +63,11 @@ Class SGlob {
     static MonitorBarStartTime := Map()
 
     /**
-     * Saves the initial work area configuration for each monitor so we can
-     * restore it when the script exits.
-     * @type {Map}
-     */
-    static MonitorWorkArea := Map()
-
-    /**
      * No Bar Mode
      * Disables certain komorebi-bar specific features.
      * @type {Boolean}
      */
     static NoBarMode := SGlob.ReadIniValue("Settings", "NoBarMode", "false") == "true"
-
-    /**
-     * Artifically limit the number of workspaces without having to
-     * remove the key bindings for them.
-     * Workaround for "phantom workspaces" shown in the bar.
-     * @type {Integer}
-     */
-    static NumberOfWorkspaces := SGlob.ReadIniValue("Settings", "NumberOfWorkspaces", 7)
-
-    /**
-     * Cache variable to hold the KomoDo path
-     * @type {String}
-     */
-    static KomoDoPath := SGlob.GetKomoDoPath()
 
     /**
      * Array of hwnds that are registered as AppBars, so we can unregister them on exit.
@@ -178,15 +152,18 @@ Class SGlob {
      * hotkeys to prevent sending commands to non-existent workspaces.
      * @param {String} command Command to send to Komorebi
      * @param {Integer} workspace Workspace number to send to
+     * @param {Boolean} useZeroBasedIndex Whether the workspace number is 0-based (default: true)
      */
-    static CheckWorkspaceAndExecute(command, workspace) {
+    static CheckWorkspaceAndExecute(command, workspace, useZeroBasedIndex := true) {
         if (!IsInteger(workspace))
             return
 
-        if (SGlob.NumberOfWorkspaces < (workspace + 1))
+        monitorIndex := SGlob.GetCurrentMonitorByCursorPosition(true).monitorIndex
+
+        if (KomorebiState.NumberOfWorkspaces.Get(monitorIndex) < (workspace + (useZeroBasedIndex ? 1 : 0)))
             return
 
-        SGlob.Komorebic(Format("{} {}", command, workspace))
+        SGlob.Komorebic(Format("{} {}", command, (useZeroBasedIndex ? workspace : workspace - 1)))
     }
 
     /**
@@ -207,6 +184,27 @@ Class SGlob {
     static FocusDesktopWorkaround() {
         WinActivate("ahk_class Progman")
         OutputDebug("[FocusDesktopWorkaround] Focused Progman!")
+    }
+
+    /**
+     * Focuses the workspace on the current monitor based on the specified workspace index.
+     * "Current monitor" refers to the monitor where the mouse cursor is currently located.
+     * Note: The workspaceIndex is 0-based.
+     * @param {Integer} workspaceIndex The index of the workspace to focus on the current monitor (0-based)
+     * @param {Boolean} useZeroBasedIndex Whether the workspace index is 0-based (default: true)
+     */
+    static FocusCurrentMonitorWorkspace(workspaceIndex, useZeroBasedIndex := true) {
+        if (!IsInteger(workspaceIndex))
+            return
+
+        ; Trying to be smart by getting active windows first is not a good idea
+        ; as that usually fails with cloaking and jumps around multiple monitors...
+        monitorIndex := SGlob.GetCurrentMonitorByCursorPosition(true).monitorIndex
+
+        if (KomorebiState.NumberOfWorkspaces.Get(monitorIndex) < (workspaceIndex + (useZeroBasedIndex ? 1 : 0)))
+            return
+
+        SGlob.Komorebic(Format("focus-monitor-workspace {} {}", monitorIndex, (useZeroBasedIndex ? workspaceIndex : workspaceIndex - 1)))
     }
 
     /**
@@ -248,20 +246,23 @@ Class SGlob {
     /**
      * Get the current monitor based on the mouse cursor position
      * This method retrieves the coordinates of the mouse cursor and determines which monitor it is on.
+     * @param {Boolean} useZeroBasedIndex Whether to return the monitor index as 0-based (default: false, meaning 1-based index)
      * @returns {Object} The monitor index and work area dimensions
      */
-    static GetCurrentMonitorByCursorPosition() {
+    static GetCurrentMonitorByCursorPosition(useZeroBasedIndex := false) {
         oldValue := CoordMode("Mouse", "Screen")
         MouseGetPos(&mx, &my)
         CoordMode("Mouse", oldValue)
-        return SGlob.GetMonitorByXYCoord(mx, my)
+        return SGlob.GetMonitorByXYCoord(mx, my, useZeroBasedIndex)
     }
 
     /**
      * Determines the current monitor based on the cursor position.
+     * @param {Integer} outputVar The variable to store the monitor number in
+     * @param {Boolean} useZeroBasedIndex Whether to return the monitor index as 0-based (default: false, meaning 1-based index)
      */
-    static GetCurrentMonitorNum(&outputVar) {
-        monitor := SGlob.GetCurrentMonitorByCursorPosition()
+    static GetCurrentMonitorNum(&outputVar, useZeroBasedIndex := false) {
+        monitor := SGlob.GetCurrentMonitorByCursorPosition(useZeroBasedIndex := useZeroBasedIndex)
 
         ; No monitor found - why?
         if (monitor == -1)
@@ -288,25 +289,29 @@ Class SGlob {
     }
 
     /**
-     * Reads the KomoDo path from the ini file and resolves environment variables
-     * @returns {String} The resolved path to the KomoDo executable
-     */
-    static GetKomoDoPath() {
-        komodoPath := SGlob.ReadIniValue("KomoDo", "KomoDoPath", "")
-        komodoPath := SGlob.ResolveEnvironmentVariables(komodoPath)
-        
-        if(SGlob.IsKomoDoAvailable(komodoPath))
-            return komodoPath
-        
-        return ""
-    }
-
-    /**
      * Get Komorebi Bar processes without any qualifiers
      * @returns {Integer[]} An array of process IDs for Komorebi Bar
      */
     static GetKomorebiBarProcesses() {
         return SGlob.ProcessGetByNameAndArguments("komorebi-bar.exe", "")
+    }
+
+    /**
+     * A helper method to safely get values from a nested map object.
+     * @param {Map} mapObject The map object to retrieve the value from
+     * @param {...Any} keys The keys to traverse the nested map, basically an XPath
+     * @returns {Any} The value found at the specified keys, or an empty string if not found
+     */
+    static GetMapValue(mapObject, keys*) {
+        currentMap := mapObject
+
+        for (key in keys) {
+            if (!currentMap.Has(key))
+                return ""
+            currentMap := currentMap.Get(key)
+        }
+
+        return currentMap
     }
 
     /**
@@ -367,10 +372,11 @@ Class SGlob {
      * Function to get the monitor based on a given set of X and Y coordinates.
      * @param {Integer} xCoord The X coordinate to check
      * @param {Integer} yCoord The Y coordinate to check
+     * @param {Boolean} useZeroBasedIndex Whether to return the monitor index as 0-based (default: false, meaning 1-based index)
      * @returns {Object} The monitor index and work area dimensions
      */
-    static GetMonitorByXYCoord(xCoord, yCoord) {
-        monitors := SGlob.GetMonitors()
+    static GetMonitorByXYCoord(xCoord, yCoord, useZeroBasedIndex := false) {
+        monitors := SGlob.GetMonitors(useZeroBasedIndex := useZeroBasedIndex)
 
         ; We need two iterations here.
         ; The first run checks whether the coordinates are within any
@@ -402,7 +408,11 @@ Class SGlob {
         return -1
     }
 
-    static GetMonitors() {
+    /**
+     * Gets the monitor information for all connected monitors.
+     * @param {Boolean} useZeroBasedIndex Return the monitorIndex as 0-based index (default: false, meaning 1-based index)
+     */
+    static GetMonitors(useZeroBasedIndex := false) {
         monitors := []
         monitorCount := SysGet(WinuserConstants.SM_CMONITORS)
 
@@ -416,7 +426,7 @@ Class SGlob {
             )
 
             monitors.Push({
-                monitorIndex: A_Index,
+                monitorIndex: useZeroBasedIndex ? A_Index - 1 : A_Index,
                 workAreaX: workAreaX,
                 workAreaY: workAreaY,
                 workAreaWidth: workAreaWidth,
@@ -470,36 +480,12 @@ Class SGlob {
     }
 
     /**
-     * Function to hide the taskbar
-     */
-    static HideTaskbar() {
-        taskbarHwnd := SGlob.GetTaskbarHandle()
-
-        if (!taskbarHwnd)
-            return
-
-        DllCall("ShowWindow",
-            "Ptr", taskbarHwnd,
-            "Int", WinuserConstants.SW_HIDE
-        )
-    }
-
-    /**
      * Determines whether a given input is a function.
      * @param {Func} fn Pointer to a function
      * @returns {Boolean} True if the input is a function, false otherwise
      */
     static IsFunc(fn?) {
         return (IsSet(fn) && HasMethod(fn))
-    }
-
-    /**
-     * Function to check if KomoDo is available
-     * @param {String} komodoPath Path to the KomoDo executable
-     * @returns {Boolean} True if KomoDo is available, false otherwise
-     */
-    static IsKomoDoAvailable(komodoPath := SGlob.KomoDoPath) {
-        return (FileExist(komodoPath) != "")
     }
 
     /**
@@ -528,15 +514,6 @@ Class SGlob {
                 OutputDebug(Format("No process found for {}, skipping.", applicationName))
             }
         }
-    }
-
-    /**
-     * Execute commands on KomoDo
-     * @param {String[]} cmd KomoDo command to execute
-     */
-    static KomoDo(cmd) {
-        if(SGlob.IsKomoDoAvailable())
-            RunWait(Format("{} {}", SGlob.KomoDoPath, cmd), , "Hide")
     }
 
     /**
@@ -590,47 +567,6 @@ Class SGlob {
         }
 
         return listOfPids
-    }
-
-    /**
-     * Process the Komorebi Bar touch queue.
-     */
-    static ProcessKomorebiBarTouchConfigQueue() {
-        if (SGlob.KomorebiBarTouchConfigQueue.Has(-1)) {
-            OutputDebug("Touching all Komorebi Bar configs...")
-            ; Empty the queue
-            SGlob.KomorebiBarTouchConfigQueue := []
-            ; Touch all Komorebi Bar processes
-            SGlob.TouchKomorebiBarConfig()
-            ; ...and leave!
-            return
-        }
-
-        ; To ensure we only touch each process once per run!
-        alreadyTouched := []
-
-        while (SGlob.KomorebiBarTouchConfigQueue.Length > 0) {
-            pid := SGlob.KomorebiBarTouchConfigQueue.Pop()
-            
-            if (alreadyTouched.Has(pid)) {
-                OutputDebug(Format("Already touched Komorebi Bar config for PID {}, skipping...", pid))
-                continue
-            }
-            
-            OutputDebug(Format("Touching Komorebi Bar config for PID {}", pid))
-            SGlob.TouchKomorebiBarConfig(pid)
-            alreadyTouched.Push(pid)
-        }
-    }
-
-    /**
-     * Adds a process ID to the Komorebi Bar touch queue.
-     * Can also be -1 to touch all Komorebi Bar processes.
-     * @param {Integer} pid Process ID that should get "the touch".
-     */
-    static QueueKomorebiBarTouchConfig(pid := -1) {
-        OutputDebug(Format("Queueing touching komorebi-bar config for PID: {}", pid))
-        SGlob.KomorebiBarTouchConfigQueue.Push(pid)
     }
 
     /**
@@ -791,7 +727,7 @@ Class SGlob {
 
     /**
      * Runs a DefaultApplication key from the ini file
-     * @param appName Name of the application key name from the ini file
+     * @param {String} appName Name of the application key name from the ini file
      */
     static RunDefaultApplication(appName) {
         appPath := SGlob.ReadIniValue("DefaultApplications", appName, "")
@@ -914,8 +850,9 @@ Class SGlob {
      * Does not touch the cursor if it's already on the specified monitor.
      * Also does nothing if the specified monitor number is out of bounds.
      * @param {Integer} monitorNum Monitor number to set the cursor on (1-based index)
+     * @param {Boolean} useZeroBasedIndex Whether the monitor number is 0-based (default: false, meaning 1-based index)
      */
-    static SetCursorToMonitorNum(monitorNum) {
+    static SetCursorToMonitorNum(monitorNum, useZeroBasedIndex := false) {
         monitors := SGlob.GetMonitors()
         currentMonitor := SGlob.GetCurrentMonitorByCursorPosition()
 
@@ -923,6 +860,8 @@ Class SGlob {
             OutputDebug("SetCursorToMonitorNum: Failed to get current monitor based on cursor position.")
             return
         }
+
+        monitorNum := useZeroBasedIndex ? monitorNum + 1 : monitorNum
 
         if (monitorNum == currentMonitor.monitorIndex)
             return
@@ -941,46 +880,12 @@ Class SGlob {
     }
 
     /**
-     * Function to set the taskbar to be topmost.
-     * Komorebi seems to put it behind other windows by default...
-     */
-    static SetTaskbarTopMost() {
-        taskbarHwnd := SGlob.GetTaskbarHandle()
-
-        if (!taskbarHwnd)
-            return
-
-        DllCall("SetWindowPos",
-            "Ptr", taskbarHwnd,
-            "Ptr", WinuserConstants.HWND_TOPMOST,
-            "Int", 0,
-            "Int", 0,
-            "Int", 0,
-            "Int", 0,
-            "UInt", WinuserConstants.SWP_NOMOVE | WinuserConstants.SWP_NOSIZE | WinuserConstants.SWP_SHOWWINDOW
-        )
-    }
-
-    /**
-     * Function to show the taskbar
-     */
-    static ShowTaskbar() {
-        taskbarHwnd := SGlob.GetTaskbarHandle()
-
-        if (!taskbarHwnd)
-            return
-
-        DllCall("ShowWindow",
-            "Ptr", taskbarHwnd,
-            "Int", WinuserConstants.SW_SHOW
-        )
-    }
-
-    /**
      * Touch komorebi-bar's configuration to force a hot-reload...
      * Otherwise the bar is too big... (yeah really!)
      * Optionally allows to specify a PID to wait for.
      * @param {Integer} pidToWaitFor The process ID to wait for before touching the configuration
+     * @param {String} processNameToWaitFor The process name to wait for if PID is not specified (default: "komorebi-bar.exe")
+     * @param {String} filePattern The file pattern to touch, where the monitor number will be replaced with a format specifier (default: "komorebi.bar.monitor{:02}.json")
      */
     static TouchKomorebiBarConfig(pidToWaitFor := -1, processNameToWaitFor := "komorebi-bar.exe", filePattern := "komorebi.bar.monitor*.json") {
         if (SGlob.NoBarMode)
@@ -1342,9 +1247,6 @@ Class HotkeyListHelper {
         
         ; Split content into lines for line number tracking
         scriptLines := StrSplit(scriptContent, "`n", "`r")
-        
-        ; Flag to start processing the script
-        processingStarted := false
 
         ; Pattern for hotkey definitions at start of line
         hotkeyPattern := "^([#!^+]*[\S]+)::"
@@ -1365,19 +1267,7 @@ Class HotkeyListHelper {
         for index, line in scriptLines {
             lineNum++
 
-            ; Skip all lines until we get the directive to start processing.
-            if (InStr(line, "@" . "startprocessing"))
-                processingStarted := true
-
-            if (!processingStarted)
-                continue
-
-            ; Allow for stopping the parsing at a certain point.
-            ; Gotta be sneaky about it, otherwise we stop right on this line!
-            if (InStr(line, "@" . "stopprocessing"))
-                break
-
-            ; Now try to match the function name, so we can explicitly call it.
+            ; Try to match the function name, so we can explicitly call it.
             if (RegExMatch(line, hotkeyPattern, &match)) {
                 functionName := ""
 
@@ -1473,7 +1363,7 @@ Class HotkeyListHelper {
                 }
             }
             
-            if (!ignore && SGlob.IsFunc(%hotkeyMatch.functionName%?)) {
+            if (!ignore && hotkeyMatch.functionName && SGlob.IsFunc(%hotkeyMatch.functionName%?)) {
                 this.hotkeys.Push({
                     rawhotkey: hotkeyMatch.hotkey,
                     hotkey: this.FormatHotkeyName(Trim(hotkeyMatch.hotkey)),
@@ -1565,22 +1455,6 @@ Class HotkeyListHelper {
         this.SetListViewColumnWidth()
         DllCall("LockWindowUpdate", "UInt", 0)
     }
-
-    /**
-     * Event handler for the listView KeyPress event
-     * @param {Object} guiCtrlObj The GUI control that triggered the event 
-     * @param {String} info The key that was pressed
-     */
-    listView_OnKeyPress(guiCtrlObj, info) {
-        if (info == "Enter") {
-            ; Get the selected row number
-            rowNum := this.listView.GetNext(0)
-            if (rowNum > 0) {
-                ; Call the double-click handler with the selected row
-                this.listView_OnDoubleClick(guiCtrlObj, rowNum)
-            }
-        }
-    }
 }
 
 /**
@@ -1665,9 +1539,10 @@ Class NamedPipeListener {
 			this._Fail(Format("[NamedPipeListener] ReadFile failed. Error: {}", -status))
 		}
 
-        if (bytesRead > 0) {			
-            if (SGlob.IsFunc(this.OnMessage))
-                this.OnMessage.Call(msg, bytesRead)
+        if (bytesRead > 0) {
+            cleanMsg := Trim(msg, " `t`r`n`0")
+            if (cleanMsg != "" && SGlob.IsFunc(this.OnMessage))
+                this.OnMessage.Call(cleanMsg, bytesRead)
 		}
 	}
 
@@ -1899,6 +1774,181 @@ Class NamedPipeListener {
 		MsgBox message, "Pipe Dream shattered", "Iconx"
 		ExitApp
 	}
+}
+
+/**
+ * https://github.com/TheArkive/JXON_ahk2
+ */
+Class Jxon {
+    static Load(&src, args*) {
+        key := "", is_key := false
+        stack := [ tree := [] ]
+        next := '"{[01234567890-tfn'
+        pos := 0
+        
+        while ( (ch := SubStr(src, ++pos, 1)) != "" ) {
+            if InStr(" `t`n`r", ch)
+                continue
+            if !InStr(next, ch, true) {
+                testArr := StrSplit(SubStr(src, 1, pos), "`n")
+                
+                ln := testArr.Length
+                col := pos - InStr(src, "`n",, -(StrLen(src)-pos+1))
+
+                msg := Format("{}: line {} col {} (char {})"
+                ,   (next == "")      ? ["Extra data", ch := SubStr(src, pos)][1]
+                : (next == "'")     ? "Unterminated string starting at"
+                : (next == "\")     ? "Invalid \escape"
+                : (next == ":")     ? "Expecting ':' delimiter"
+                : (next == '"')     ? "Expecting object key enclosed in double quotes"
+                : (next == '"}')    ? "Expecting object key enclosed in double quotes or object closing '}'"
+                : (next == ",}")    ? "Expecting ',' delimiter or object closing '}'"
+                : (next == ",]")    ? "Expecting ',' delimiter or array closing ']'"
+                : [ "Expecting JSON value(string, number, [true, false, null], object or array)"
+                    , ch := SubStr(src, pos, (SubStr(src, pos)~="[\]\},\s]|$")-1) ][1]
+                , ln, col, pos)
+
+                throw Error(msg, -1, ch)
+            }
+            
+            obj := stack[1]
+            is_array := (obj is Array)
+            
+            if i := InStr("{[", ch) { ; start new object / map?
+                val := (i = 1) ? Map() : Array()	; ahk v2
+                
+                is_array ? obj.Push(val) : obj[key] := val
+                stack.InsertAt(1,val)
+                
+                next := '"' ((is_key := (ch == "{")) ? "}" : "{[]0123456789-tfn")
+            } else if InStr("}]", ch) {
+                stack.RemoveAt(1)
+                next := (stack[1]==tree) ? "" : (stack[1] is Array) ? ",]" : ",}"
+            } else if InStr(",:", ch) {
+                is_key := (!is_array && ch == ",")
+                next := is_key ? '"' : '"{[0123456789-tfn'
+            } else { ; string | number | true | false | null
+                if (ch == '"') { ; string
+                    i := pos
+                    while i := InStr(src, '"',, i+1) {
+                        val := StrReplace(SubStr(src, pos+1, i-pos-1), "\\", "\u005C")
+                        if (SubStr(val, -1) != "\")
+                            break
+                    }
+                    if !i ? (pos--, next := "'") : 0
+                        continue
+
+                    pos := i ; update pos
+
+                    val := StrReplace(val, "\/", "/")
+                    val := StrReplace(val, '\"', '"')
+                    , val := StrReplace(val, "\b", "`b")
+                    , val := StrReplace(val, "\f", "`f")
+                    , val := StrReplace(val, "\n", "`n")
+                    , val := StrReplace(val, "\r", "`r")
+                    , val := StrReplace(val, "\t", "`t")
+
+                    i := 0
+                    while i := InStr(val, "\",, i+1) {
+                        if (SubStr(val, i+1, 1) != "u") ? (pos -= StrLen(SubStr(val, i)), next := "\") : 0
+                            continue 2
+
+                        xxxx := Abs("0x" . SubStr(val, i+2, 4)) ; \uXXXX - JSON unicode escape sequence
+                        if (xxxx < 0x100)
+                            val := SubStr(val, 1, i-1) . Chr(xxxx) . SubStr(val, i+6)
+                    }
+                    
+                    if is_key {
+                        key := val, next := ":"
+                        continue
+                    }
+                } else { ; number | true | false | null
+                    val := SubStr(src, pos, i := RegExMatch(src, "[\]\},\s]|$",, pos)-pos)
+                    
+                    if IsInteger(val)
+                        val += 0
+                    else if IsFloat(val)
+                        val += 0
+                    else if (val == "true" || val == "false")
+                        val := (val == "true")
+                    else if (val == "null")
+                        val := ""
+                    else if is_key {
+                        pos--, next := "#"
+                        continue
+                    }
+                    
+                    pos += i-1
+                }
+                
+                is_array ? obj.Push(val) : obj[key] := val
+                next := obj == tree ? "" : is_array ? ",]" : ",}"
+            }
+        }
+        
+        return tree[1]
+    }
+
+    static Dump(obj, indent:="", lvl:=1) {
+        if IsObject(obj) {
+            If !(obj is Array || obj is Map || obj is String || obj is Number)
+                throw Error("Object type not supported.", -1, Format("<Object at 0x{:p}>", ObjPtr(obj)))
+            
+            if IsInteger(indent)
+            {
+                if (indent < 0)
+                    throw Error("Indent parameter must be a postive integer.", -1, indent)
+                spaces := indent, indent := ""
+                
+                Loop spaces ; ===> changed
+                    indent .= " "
+            }
+            indt := ""
+            
+            Loop indent ? lvl : 0
+                indt .= indent
+            
+            is_array := (obj is Array)
+            
+            lvl += 1, out := "" ; Make #Warn happy
+            for k, v in obj {
+                if IsObject(k) || (k == "")
+                    throw Error("Invalid object key.", -1, k ? Format("<Object at 0x{:p}>", ObjPtr(obj)) : "<blank>")
+                
+                if !is_array ;// key ; ObjGetCapacity([k], 1)
+                    out .= (ObjGetCapacity([k]) ? Jxon.Dump(k) : escape_str(k)) (indent ? ": " : ":") ; token + padding
+                
+                out .= Jxon.Dump(v, indent, lvl) ; value
+                    .  ( indent ? ",`n" . indt : "," ) ; token + indent
+            }
+
+            if (out != "") {
+                out := Trim(out, ",`n" . indent)
+                if (indent != "")
+                    out := "`n" . indt . out . "`n" . SubStr(indt, StrLen(indent)+1)
+            }
+            
+            return is_array ? "[" . out . "]" : "{" . out . "}"
+        
+        } Else If (obj is Number)
+            return obj
+        
+        Else ; String
+            return escape_str(obj)
+        
+        escape_str(obj) {
+            obj := StrReplace(obj,"\","\\")
+            obj := StrReplace(obj,"`t","\t")
+            obj := StrReplace(obj,"`r","\r")
+            obj := StrReplace(obj,"`n","\n")
+            obj := StrReplace(obj,"`b","\b")
+            obj := StrReplace(obj,"`f","\f")
+            obj := StrReplace(obj,"/","\/")
+            obj := StrReplace(obj,'"','\"')
+            
+            return '"' obj '"'
+        }
+    }    
 }
 
 /**
@@ -2284,6 +2334,14 @@ Class WinbaseConstants {
     static SYNCHRONIZE := 0x00100000
 }
 
+Class KomorebiState {
+    static FocusedMonitor := -1
+    static FocusedWorkspace := -1
+    static FocusedLayout := "Uninitialized"
+    static NumberOfWorkspaces := Map()
+    static IsPaused := false
+}
+
 ; -----------------------------------------------------------------------------
 ; Internal Functions                                                          |
 ; -----------------------------------------------------------------------------
@@ -2312,63 +2370,115 @@ OnDisplayChange(wParam, lParam, msg, hwnd) {
  * @param {Integer} bytesRead The number of bytes read from the pipe
  */
 OnKomorebiPipeEvent(msg, bytesRead) {
-    if RegExMatch(msg, '^\{\s*"event"\s*:\s*\{\s*"type"\s*:\s*"([^"]+)"\s*,\s*"content"\s*:\s*([^}]+)\}', &eventTypeMatch) {
-        switch eventTypeMatch[1] {
-            case "CycleFocusMonitor",
-                "CycleFocusWorkspace",
-                "FocusMonitorNumber",
-                "FocusMonitorWorkspaceNumber",
-                "FocusWorkspaceNumber":
-                OutputDebug(Format("Handling {} event (Content: {}).", eventTypeMatch[1], eventTypeMatch[2]))
+    global lastMonitorId
 
-                eventName := eventTypeMatch[1]
-                eventValue := eventTypeMatch[2]
+    jsonObj := Jxon.Load(&msg)
+    eventName := jsonObj["event"]["type"]
+    
+    ; Keep in memory to compare against new values!
+    _prevLayout := KomorebiState.FocusedLayout
+    _prevMonitor := KomorebiState.FocusedMonitor
+    
+    ; Extract new state values from the msg
+    KomorebiState.IsPaused := (SGlob.GetMapValue(jsonObj, "state", "is_paused") == 1)
+    
+    ; These values need their sanity checks. Seems they love to bug out when no monitor
+    ; is connected...
+    KomorebiState.FocusedMonitor := SGlob.GetMapValue(jsonObj, "state", "monitors", "focused")
+    if (KomorebiState.FocusedMonitor == "")
+        return
+    KomorebiState.FocusedWorkspace := SGlob.GetMapValue(jsonObj, "state", "monitors", "elements", KomorebiState.FocusedMonitor + 1, "workspaces", "focused")
+    if (KomorebiState.FocusedWorkspace == "")
+        return
+    KomorebiState.FocusedLayout := SGlob.GetMapValue(jsonObj, "state", "monitors", "elements", KomorebiState.FocusedMonitor + 1, "workspaces", "elements", KomorebiState.FocusedWorkspace + 1, "layout", "Default")
+    if (KomorebiState.FocusedLayout == "")
+        return
 
-                ; Remove the Json array brackets
-                if (SubStr(eventValue, 1, 1) = "[")
-                    eventValue := SubStr(eventValue, 2, -1)
+    ; Automatically determine the number of workspaces on each monitor.
+    ; Supersedes the manually configured NumberOfWorkspaces ini setting
+    ; because it allows for differing number of workspaces per monitor.
+    mCnt := 0
+    for monitor in SGlob.GetMapValue(jsonObj, "state", "monitors", "elements") {
+        wCnt := monitor["workspaces"]["elements"].Length
+        KomorebiState.NumberOfWorkspaces[mCnt] := wCnt
+        mCnt++
+    }
 
-                if (eventName == "FocusMonitorNumber" ||
-                    eventName == "FocusMonitorWorkspaceNumber") {
-                    ; Initialize
-                    monitorNumber := ""
-
-                    switch (eventName) {
-                        case "FocusMonitorNumber":
-                            monitorNumber := eventValue
-                        case "FocusMonitorWorkspaceNumber":
-                            monitorNumber := StrSplit(eventValue, ",", , 2)[1]
-                    }
-
-                    if (!IsNumber(monitorNumber)) {
-                        OutputDebug(Format("Invalid monitor number received in FocusMonitorNumber event: {}. Skipping workaround.", monitorNumber))
-                        return
-                    }
-
-                    ; Convert from 0-indexed to 1-indexed
-                    monitorNumber := monitorNumber + 1
-
-                    ; Set cursor position, if enabled
-                    if (SGlob.HandleCursorOnMonitorChange)
-                        SGlob.SetCursorToMonitorNum(monitorNumber)
-                }
-
-                ; Only run FocusDesktopWorkaround if there is no active window.
-                hwnd := WinActive("A")
-                if (hwnd)
-                    return
-                ; This workaround prevents windows from spawning on the wrong workspace.
-                ; Primarily required if you are using Raycast.
-                OutputDebug(Format("No active window detected after {} event, running FocusPseudoWindowWorkaround.", eventTypeMatch[1]))
-                ; Note: Raycast 0.45 does not accept FocusDesktopWorkaround anymore,
-                ;       however creating a pseudo window and focusing it seems to
-                ;       achieve the desired result.
-                SGlob.FocusPseudoWindowWorkaround()
-                ; Focus desktop anyway to ensure taskbar auto-hide works properly.
-                SGlob.FocusDesktopWorkaround()
-            default: 
-                ;OutputDebug(Format("Ignoring incoming event type: {}", eventTypeMatch[1]))
+    ; Ensure that, depending on the layout, we get the proper ratios.
+    if (_prevLayout != KomorebiState.FocusedLayout) {
+        switch KomorebiState.FocusedLayout {
+            case "HorizontalStack":
+                SGlob.Komorebic("layout-ratios --columns 0.5 --rows 0.7 0.3")
+            case "VerticalStack":
+                SGlob.Komorebic("layout-ratios --columns 0.6 0.4 --rows 0.5")
+            default:
+                SGlob.Komorebic("layout-ratios --columns 0.5 --rows 0.5")
         }
+    }
+
+    switch eventName {
+        case "CycleFocusMonitor",
+            "CycleFocusWorkspace",
+            "FocusMonitorNumber",
+            "FocusMonitorWorkspaceNumber",
+            "FocusWorkspaceNumber":
+
+            ; Update where the cursor is right now.
+            ; This is different from KomorebiState.FocusedMonitor,
+            ; because the cursor doesn't necessarily have to be on the
+            ; same monitor...
+            SGlob.GetCurrentMonitorNum(&lastMonitorId, useZeroBasedIndex := true)
+
+            eventValue := SGlob.GetMapValue(jsonObj, "event", "content")
+
+            if (eventName == "FocusMonitorNumber" ||
+                eventName == "FocusMonitorWorkspaceNumber")
+                monitorId := IsObject(eventValue) ? eventValue[1] : eventValue
+            if (eventName == "CycleFocusMonitor") {
+                monitorId := lastMonitorId + (eventValue == "Previous" ? -1 : 1)
+
+                ; Wrap around the monitor index if it goes out of bounds
+                if (monitorId < 0)
+                    monitorId := KomorebiState.NumberOfWorkspaces.Count - 1
+                if (monitorId > KomorebiState.NumberOfWorkspaces.Count - 1)
+                    monitorId := 0
+            }
+
+            if (SGlob.HandleCursorOnMonitorChange && lastMonitorId != monitorId) {
+                SGlob.SetCursorToMonitorNum(monitorId, useZeroBasedIndex := true)
+                lastMonitorId := monitorId
+            }
+
+            ; Only run FocusDesktopWorkaround if there is no active window.
+            hwnd := WinActive("A")
+
+            ; On cycle-monitor we'll try to force the focus if there is a window
+            ; on the new monitor...
+            if (eventName == "CycleFocusMonitor") {
+                if (hwnd) {
+                    WinGetPos(&hwnd_x, &hwnd_y, &hwnd_w, &hwnd_h, "ahk_id " . hwnd)
+                    hwnd_mon := SGlob.GetMonitorByXYCoord(hwnd_x + hwnd_w // 2, hwnd_y + hwnd_h // 2, useZeroBasedIndex := true)
+
+                    if(hwnd_mon != -1 && hwnd_mon.monitorIndex != lastMonitorId)
+                        SGlob.Komorebic("force-focus")
+                }
+            }
+
+            if (hwnd)
+                return
+
+            ; This workaround prevents windows from spawning on the wrong workspace.
+            ; Primarily required if you are using Raycast.
+            ;
+            ; Note: Raycast 0.45 does not accept FocusDesktopWorkaround anymore,
+            ;       however creating a pseudo window and focusing it seems to
+            ;       achieve the desired result.
+            OutputDebug(Format("No active window detected after {} event, running FocusPseudoWindowWorkaround.", eventName))
+            SGlob.FocusPseudoWindowWorkaround()
+            ; Focus desktop anyway to ensure taskbar auto-hide works properly.
+            SGlob.FocusDesktopWorkaround()
+        default:
+            ;OutputDebug(Format("Ignoring incoming event type: {}", eventName))
     }
 }
 
@@ -2388,19 +2498,6 @@ OnKomorebiPipeEvent(msg, bytesRead) {
  */
 OnSettingChange(wParam, lParam, msg, hwnd) {
     SGlob.RunOrKillKomorebiBarOnDisplayChange()
-
-    ; Optionally hide the taskbar
-    if (SGlob.ReadIniValue("Settings", "HideTaskbar", "false") == "true") {
-        SGlob.HideTaskbar()
-    } else {
-        SGlob.ShowTaskbar()
-
-        Sleep(100)
-
-        ; Make the taskbar topmost if configured
-        if (SGlob.ReadIniValue("Settings", "TaskbarTopmost", "false") == "true")
-            SGlob.SetTaskbarTopMost()
-    }
 }
 
 /**
@@ -2515,7 +2612,7 @@ OutputDebug(Format("{} / SCRIPT INIT START", FormatTime(, "yyyy-MM-dd, HH:mm:ss"
 
 ; Pre-determines the monitor where the cursor is initially located.
 lastMonitorId := -1
-SGlob.GetCurrentMonitorNum(&lastMonitorId)
+SGlob.GetCurrentMonitorNum(&lastMonitorId, useZeroBasedIndex := true)
 OutputDebug(Format("{} / Finished GetCurrentMonitorNum", FormatTime(, "yyyy-MM-dd, HH:mm:ss")))
 
 SGlob.AdjustTray()
@@ -2563,15 +2660,7 @@ OutputDebug(Format("{} / Finished komorebic subscribe-pipe", FormatTime(, "yyyy-
 
 ; Run additional programs configured in the ini file
 SGlob.RunAdditionalApplications()
-OutputDebug(Format("{} / Finish RunAdditionalApplications", FormatTime(, "yyyy-MM-dd, HH:mm:ss")))
-
-; ---
-
-; TODO: Can delay startup significantly, figure out why!
-; Send a broadcast message to all windows to notify them of settings changes.
-; This ensures that certain internals are being called as intended.
-;SGlob.BroadcastWmSettingChange()
-;OutputDebug(Format("{} / Finished BroadcastWmSettingChange", FormatTime(, "yyyy-MM-dd, HH:mm:ss")))
+OutputDebug(Format("{} / Finished RunAdditionalApplications", FormatTime(, "yyyy-MM-dd, HH:mm:ss")))
 
 ; ---
 
@@ -2616,9 +2705,6 @@ OutputDebug(Format("{} / SCRIPT INIT FINISHED!", FormatTime(, "yyyy-MM-dd, HH:mm
 ; so it can be referenced in the hotkey list window. If the hotkey does not have
 ; a function name, it will not be shown in the hotkey list window, even if
 ; it has a comment with a description.
-
-; Leave this comment in, it indicates this is where the parsing should start:
-; @startprocessing
 
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
 ; Overlays                                                                    |
@@ -2837,15 +2923,12 @@ promoteWindow(hk) {
  * (Win + Insert)
  * @context Komorebi
  * @keyword toggle-maximize window
- * @disabled
  */
-/*
 #HotIf !WinActive("ahk_group KomoIgnoreProcesses")
 #Insert::
 toggleMaximize(hk){
     SGlob.Komorebic("toggle-maximize")
 }
-*/
 
 /**
  * Minimize Current Window
@@ -2874,7 +2957,7 @@ closeWindow(hk){
 /**
  * Center Regular Active Window
  * (Win + Shift + C)
- * @context Komodo General
+ * @context Komorebi General
  * @keyword center-active-window
  * @disabled
  */
@@ -2992,7 +3075,6 @@ toggleMonocle(hk) {
 #+S::
 reinitializeKomorebiBar(hk) {
     SGlob.RunOrKillKomorebiBarOnDisplayChange()
-    SGlob.ProcessKomorebiBarTouchConfigQueue()
     SGlob.RegisterKomorebiBarsAsAppBars()
 }
 
@@ -3167,7 +3249,7 @@ resizeAxisVerticalDecrease(hk) {
 #WheelUp::
 cycleWorkspacePrevious(hk) {
     global lastMonitorId
-    monitor := SGlob.GetCurrentMonitorByCursorPosition()
+    monitor := SGlob.GetCurrentMonitorByCursorPosition(useZeroBasedIndex := true)
     if (monitor != -1) {
         if (lastMonitorId != monitor.monitorIndex) {
             lastMonitorId := monitor.monitorIndex
@@ -3186,7 +3268,7 @@ cycleWorkspacePrevious(hk) {
 #WheelDown::
 cycleWorkspaceNext(hk) {
     global lastMonitorId
-    monitor := SGlob.GetCurrentMonitorByCursorPosition()
+    monitor := SGlob.GetCurrentMonitorByCursorPosition(useZeroBasedIndex := true)
     if (monitor != -1) {
         if (lastMonitorId != monitor.monitorIndex) {
             lastMonitorId := monitor.monitorIndex            
@@ -3431,7 +3513,7 @@ sendToMonitor1(hk) {
 #+1::
 #+Numpad1::
 sendToWorkspace1(hk) {
-    SGlob.CheckWorkspaceAndExecute("move-to-workspace", 0)
+    SGlob.CheckWorkspaceAndExecute("move-to-workspace", 1, useZeroBasedIndex := false)
 }
 
 /**
@@ -3443,7 +3525,7 @@ sendToWorkspace1(hk) {
 #+2::
 #+Numpad2::
 sendToWorkspace2(hk) {
-    SGlob.CheckWorkspaceAndExecute("move-to-workspace", 1)
+    SGlob.CheckWorkspaceAndExecute("move-to-workspace", 2, useZeroBasedIndex := false)
 }
 
 /**
@@ -3455,7 +3537,7 @@ sendToWorkspace2(hk) {
 #+3::
 #+Numpad3::
 sendToWorkspace3(hk) {
-    SGlob.CheckWorkspaceAndExecute("move-to-workspace", 2)
+    SGlob.CheckWorkspaceAndExecute("move-to-workspace", 3, useZeroBasedIndex := false)
 }
 
 /**
@@ -3467,7 +3549,7 @@ sendToWorkspace3(hk) {
 #+4::
 #+Numpad4::
 sendToWorkspace4(hk) {
-    SGlob.CheckWorkspaceAndExecute("move-to-workspace", 3)
+    SGlob.CheckWorkspaceAndExecute("move-to-workspace", 4, useZeroBasedIndex := false)
 }
 
 /**
@@ -3479,7 +3561,7 @@ sendToWorkspace4(hk) {
 #+5::
 #+Numpad5::
 sendToWorkspace5(hk) {
-    SGlob.CheckWorkspaceAndExecute("move-to-workspace", 4)
+    SGlob.CheckWorkspaceAndExecute("move-to-workspace", 5, useZeroBasedIndex := false)
 }
 
 /**
@@ -3491,7 +3573,7 @@ sendToWorkspace5(hk) {
 #+6::
 #+Numpad6::
 sendToWorkspace6(hk) {
-    SGlob.CheckWorkspaceAndExecute("move-to-workspace", 5)
+    SGlob.CheckWorkspaceAndExecute("move-to-workspace", 6, useZeroBasedIndex := false)
 }
 
 /**
@@ -3503,7 +3585,7 @@ sendToWorkspace6(hk) {
 #+7::
 #+Numpad7::
 sendToWorkspace7(hk) {
-    SGlob.CheckWorkspaceAndExecute("move-to-workspace", 6)
+    SGlob.CheckWorkspaceAndExecute("move-to-workspace", 7, useZeroBasedIndex := false)
 }
 
 /**
@@ -3515,7 +3597,7 @@ sendToWorkspace7(hk) {
 #+8::
 #+Numpad8::
 sendToWorkspace8(hk) {
-    SGlob.CheckWorkspaceAndExecute("move-to-workspace", 7)
+    SGlob.CheckWorkspaceAndExecute("move-to-workspace", 8, useZeroBasedIndex := false)
 }
 
 /**
@@ -3527,7 +3609,7 @@ sendToWorkspace8(hk) {
 #+9::
 #+Numpad9::
 sendToWorkspace9(hk) {
-    SGlob.CheckWorkspaceAndExecute("move-to-workspace", 8)
+    SGlob.CheckWorkspaceAndExecute("move-to-workspace", 9, useZeroBasedIndex := false)
 }
 
 ; - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -3543,7 +3625,7 @@ sendToWorkspace9(hk) {
 #1::
 #Numpad1::
 switchToWorkspace1(hk) {
-    SGlob.CheckWorkspaceAndExecute("focus-workspace", 0)
+    SGlob.FocusCurrentMonitorWorkspace(1, useZeroBasedIndex := false)
 }
 
 /**
@@ -3555,7 +3637,7 @@ switchToWorkspace1(hk) {
 #2::
 #Numpad2::
 switchToWorkspace2(hk) {
-    SGlob.CheckWorkspaceAndExecute("focus-workspace", 1)
+    SGlob.FocusCurrentMonitorWorkspace(2, useZeroBasedIndex := false)
 }
 
 /**
@@ -3567,7 +3649,7 @@ switchToWorkspace2(hk) {
 #3::
 #Numpad3::
 switchToWorkspace3(hk) {
-    SGlob.CheckWorkspaceAndExecute("focus-workspace", 2)
+    SGlob.FocusCurrentMonitorWorkspace(3, useZeroBasedIndex := false)
 }
 
 /**
@@ -3579,7 +3661,7 @@ switchToWorkspace3(hk) {
 #4::
 #Numpad4::
 switchToWorkspace4(hk) {
-    SGlob.CheckWorkspaceAndExecute("focus-workspace", 3)
+    SGlob.FocusCurrentMonitorWorkspace(4, useZeroBasedIndex := false)
 }
 
 /**
@@ -3591,7 +3673,7 @@ switchToWorkspace4(hk) {
 #5::
 #Numpad5::
 switchToWorkspace5(hk) {
-    SGlob.CheckWorkspaceAndExecute("focus-workspace", 4)
+    SGlob.FocusCurrentMonitorWorkspace(5, useZeroBasedIndex := false)
 }
 
 /**
@@ -3603,7 +3685,7 @@ switchToWorkspace5(hk) {
 #6::
 #Numpad6::
 switchToWorkspace6(hk) {
-    SGlob.CheckWorkspaceAndExecute("focus-workspace", 5)
+    SGlob.FocusCurrentMonitorWorkspace(6, useZeroBasedIndex := false)
 }
 
 /**
@@ -3615,7 +3697,7 @@ switchToWorkspace6(hk) {
 #7::
 #Numpad7::
 switchToWorkspace7(hk) {
-    SGlob.CheckWorkspaceAndExecute("focus-workspace", 6)
+    SGlob.FocusCurrentMonitorWorkspace(7, useZeroBasedIndex := false)
 }
 
 /**
@@ -3627,7 +3709,7 @@ switchToWorkspace7(hk) {
 #8::
 #Numpad8::
 switchToWorkspace8(hk) {
-    SGlob.CheckWorkspaceAndExecute("focus-workspace", 7)
+    SGlob.FocusCurrentMonitorWorkspace(8, useZeroBasedIndex := false)
 }
 
 /**
@@ -3639,12 +3721,11 @@ switchToWorkspace8(hk) {
 #9::
 #Numpad9::
 switchToWorkspace9(hk) {
-    SGlob.CheckWorkspaceAndExecute("focus-workspace", 8)
+    SGlob.FocusCurrentMonitorWorkspace(9, useZeroBasedIndex := false)
 }
 
 /* ----------------------------------------------------------------------------
 | Reference of original key bindings from Komorebi's AutoHotkey script        |
-|                                    (Leave this comment in: @stopprocessing) |
 ------------------------------------------------------------------------------*
 
 !q::Komorebic("close")

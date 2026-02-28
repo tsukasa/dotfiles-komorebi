@@ -57,6 +57,12 @@ Class SGlob {
     static KomorebiPipeName := SGlob.ReadIniValue("Settings", "ListenerPipeName", "komorebi-ahk")
 
     /**
+     * Cached Komorebi version string to avoid executing "komorebi --version" multiple times.
+     * @type {String}
+     */
+    static KomorebiVersionString := ""
+
+    /**
      * Map to store the start time of the monitor bar processes
      * @type {Map}
      */
@@ -92,13 +98,44 @@ Class SGlob {
      */
     static AdjustTray() {
         ; Set custom tray tooltip
-        A_IconTip := "Komorebi AutoHotkey Helper"
+        A_IconTip := "Komorebi AutoHotkey Helper`n`n" .
+                     "Status: " (KomorebiState.IsPaused ? "Paused" : "Running") "`n" .
+                     "Layout: " KomorebiState.FocusedLayout "`n" .
+                     "Layer: " KomorebiState.FocusedLayer "`n`n" .
+                     SGlob.GetKomorebiVersion()
 
         ; Set custom tray icon
         iconPath := Format("{}\komorebi-ahk.ico", A_ScriptDir)
 
-        if (FileExist(iconPath) != "")
-            TraySetIcon(iconPath, , 0)
+        ; If the custom icon exists, we can generate overlays
+        ; to display the state of the layer and the TWM.
+        if (FileExist(iconPath) != "") {
+            if (KomorebiState.FocusedLayer == "Tiling") {
+                overlay := "T"
+                foreColor := 0xFFB4BEFE
+                backColor := 0xFF11111B
+            }
+            if (KomorebiState.FocusedLayer == "Floating") {
+                overlay := "F"
+                foreColor := 0xFF89B4FA
+                backColor := 0xFF11111B
+            }
+            if (KomorebiState.IsPaused) {
+                overlay := "P"
+                foreColor := 0xFFF38BA8
+                backColor := 0xFF000000
+            }
+
+            if (IsSet(overlay)) {
+                hOverlayIcon := SGlob.CreateOverlayIcon(iconPath, overlay, "Segoe", 16, 2, foreColor, backColor)
+                if (hOverlayIcon)
+                    TraySetIcon("HICON:*" hOverlayIcon)
+                return
+            }
+            
+            ; Fallback: Use regular icon without overlay.
+            TraySetIcon(iconPath)
+        }
     }
 
     /**
@@ -164,6 +201,223 @@ Class SGlob {
             return
 
         SGlob.Komorebic(Format("{} {}", command, (useZeroBasedIndex ? workspace : workspace - 1)))
+    }
+
+    /**
+     * Cleans up the resources used for creating the glyph mask bitmaps.
+     * @param maskObj The object containing the bitmap and device context handles to clean up
+     */
+    static CleanupGlyphMask(maskObj) {
+        if !IsObject(maskObj)
+            return
+
+        DllCall("SelectObject", "ptr", maskObj.hdc, "ptr", maskObj.oldObj)
+        DllCall("DeleteObject", "ptr", maskObj.hbm)
+        DllCall("DeleteDC", "ptr", maskObj.hdc)
+    }
+
+    /**
+     * Creates a compatible DC and DIB section bitmap to be used as a mask for drawing glyphs.
+     * @param {Integer} iconSize The size of the icon for which the mask is being created (e.g., 16 for a 16x16 icon)
+     * @returns {Object} An object containing the device context handle, bitmap handle, old bitmap handle, and pointer to the bitmap bits, or 0 on failure
+     */
+    static CreateGlyphMaskBitmap(iconSize) {
+        hdc := DllCall("CreateCompatibleDC", "ptr", 0, "ptr")
+        if !hdc
+            return 0
+
+        bi := Buffer(40, 0)
+        NumPut("uint", 40, bi, 0)
+        NumPut("int", iconSize, bi, 4)
+        NumPut("int", -iconSize, bi, 8)
+        NumPut("ushort", 1, bi, 12)
+        NumPut("ushort", 32, bi, 14)
+
+        hbm := DllCall("CreateDIBSection", "ptr", hdc, "ptr", bi.Ptr, "uint", 0, "ptr*", &pBits := 0, "ptr", 0, "uint", 0, "ptr")
+        if !hbm {
+            DllCall("DeleteDC", "ptr", hdc)
+            return 0
+        }
+
+        oldObj := DllCall("SelectObject", "ptr", hdc, "ptr", hbm, "ptr")
+        DllCall("RtlZeroMemory", "ptr", pBits, "uptr", iconSize * iconSize * 4)
+
+        return { hdc: hdc, hbm: hbm, oldObj: oldObj, pBits: pBits }
+    }
+
+    /**
+     * Creates and returns an icon handle with the specified overlay glyph.
+     * @param {String} iconPath Path to the base icon file
+     * @param {String} glyph The glyph to overlay on the icon, typically a single character like "T", "F", or "P"
+     * @param {String} fontName The name of the font to use for the overlay glyph (default: "Segoe UI")
+     * @param {Integer} iconSize The size of the icon to create (default: 16)
+     * @param {Integer} outlinePx The thickness of the outline around the glyph in pixels (default: 2)
+     * @param {Integer} fontColor The color of the glyph in ARGB format (default: 0xFFFFFFFF)
+     * @param {Integer} outlineColor The color of the outline in ARGB format (default: 0xFF000000)
+     * @returns {Ptr} Handle to the created icon with the overlay, or 0 on failure
+     */
+    static CreateOverlayIcon(iconPath, glyph := "F", fontName := "Segoe UI", iconSize := 16, outlinePx := 2, fontColor := 0xFFFFFFFF, outlineColor := 0xFF000000) {
+        hBaseIcon := DllCall("LoadImage", "ptr", 0, "str", iconPath, "uint", 1, "int", iconSize, "int", iconSize, "uint", 0x10, "ptr")
+        if !hBaseIcon
+            return 0
+
+        hdc := DllCall("CreateCompatibleDC", "ptr", 0, "ptr")
+        if !hdc {
+            DllCall("DestroyIcon", "ptr", hBaseIcon)
+            return 0
+        }
+
+        bi := Buffer(40, 0)
+        NumPut("uint", 40, bi, 0)
+        NumPut("int", iconSize, bi, 4)
+        NumPut("int", -iconSize, bi, 8)
+        NumPut("ushort", 1, bi, 12)
+        NumPut("ushort", 32, bi, 14)
+
+        hbmColor := DllCall("CreateDIBSection", "ptr", hdc, "ptr", bi.Ptr, "uint", 0, "ptr*", &pBits := 0, "ptr", 0, "uint", 0, "ptr")
+        if !hbmColor {
+            DllCall("DeleteDC", "ptr", hdc)
+            DllCall("DestroyIcon", "ptr", hBaseIcon)
+            return 0
+        }
+
+        maskStride := ((iconSize + 15) // 16) * 2
+        maskBits := Buffer(maskStride * iconSize, 0)
+        hbmMask := DllCall("CreateBitmap", "int", iconSize, "int", iconSize, "uint", 1, "uint", 1, "ptr", maskBits.Ptr, "ptr")
+        if !hbmMask {
+            DllCall("DeleteObject", "ptr", hbmColor)
+            DllCall("DeleteDC", "ptr", hdc)
+            DllCall("DestroyIcon", "ptr", hBaseIcon)
+            return 0
+        }
+
+        oldObj := DllCall("SelectObject", "ptr", hdc, "ptr", hbmColor, "ptr")
+        DllCall("RtlZeroMemory", "ptr", pBits, "uptr", iconSize * iconSize * 4)
+        DllCall("DrawIconEx", "ptr", hdc, "int", 0, "int", 0, "ptr", hBaseIcon, "int", iconSize, "int", iconSize, "uint", 0, "ptr", 0, "uint", 0x0003)
+
+        SGlob.DrawOverlayGlyphToBits(pBits, iconSize, glyph, fontName, outlinePx, fontColor, outlineColor)
+
+        ii := Buffer(A_PtrSize = 8 ? 32 : 20, 0)
+        NumPut("int", 1, ii, 0)
+        NumPut("ptr", hbmMask, ii, A_PtrSize = 8 ? 16 : 12)
+        NumPut("ptr", hbmColor, ii, A_PtrSize = 8 ? 24 : 16)
+
+        hFinalIcon := DllCall("CreateIconIndirect", "ptr", ii.Ptr, "ptr")
+
+        DllCall("SelectObject", "ptr", hdc, "ptr", oldObj)
+        DllCall("DeleteObject", "ptr", hbmMask)
+        DllCall("DeleteObject", "ptr", hbmColor)
+        DllCall("DeleteDC", "ptr", hdc)
+        DllCall("DestroyIcon", "ptr", hBaseIcon)
+
+        return hFinalIcon
+    }
+
+    static DrawOverlayGlyphToBits(destBits, iconSize, glyph, fontName, outlinePx, fontColor := 0xFFFFFFFF, outlineColor := 0xFF000000) {
+        if (glyph = "")
+            return
+
+        overlaySize := Round(iconSize * 0.56)
+        fontH := Max(1, Round(overlaySize * 0.82))
+        glyphLen := StrLen(glyph)
+
+        maskOutline := SGlob.CreateGlyphMaskBitmap(iconSize)
+        if !maskOutline
+            return
+        maskFill := SGlob.CreateGlyphMaskBitmap(iconSize)
+        if !maskFill {
+            SGlob.CleanupGlyphMask(maskOutline)
+            return
+        }
+
+        hFont := DllCall(
+            "CreateFontW",
+            "int", -fontH,
+            "int", 0,
+            "int", 0,
+            "int", 0,
+            "int", 700,
+            "uint", 0,
+            "uint", 0,
+            "uint", 0,
+            "uint", 1,
+            "uint", 0,
+            "uint", 0,
+            "uint", 4,
+            "uint", 0,
+            "wstr", fontName,
+            "ptr"
+        )
+        if !hFont {
+            SGlob.CleanupGlyphMask(maskOutline)
+            SGlob.CleanupGlyphMask(maskFill)
+            return
+        }
+
+        oldFontOutline := DllCall("SelectObject", "ptr", maskOutline.hdc, "ptr", hFont, "ptr")
+        oldBkOutline := DllCall("SetBkMode", "ptr", maskOutline.hdc, "int", 1, "int")
+        oldColorOutline := DllCall("SetTextColor", "ptr", maskOutline.hdc, "uint", 0x00FFFFFF, "uint")
+
+        oldFontFill := DllCall("SelectObject", "ptr", maskFill.hdc, "ptr", hFont, "ptr")
+        oldBkFill := DllCall("SetBkMode", "ptr", maskFill.hdc, "int", 1, "int")
+        oldColorFill := DllCall("SetTextColor", "ptr", maskFill.hdc, "uint", 0x00FFFFFF, "uint")
+
+        size := Buffer(8, 0)
+        DllCall("GetTextExtentPoint32W", "ptr", maskFill.hdc, "wstr", glyph, "int", glyphLen, "ptr", size.Ptr)
+        glyphW := NumGet(size, 0, "int")
+        glyphH := NumGet(size, 4, "int")
+
+        ; Anchor glyph+outline to the icon's bottom-right corner and nudge 1px outward.
+        gx := Max(0, iconSize - glyphW - outlinePx + 1)
+        gy := Max(0, iconSize - glyphH - outlinePx + 1)
+
+        ; Build outline mask (white pixels where outline should exist)
+        loop (outlinePx * 2 + 1) {
+            dx := A_Index - outlinePx - 1
+            loop (outlinePx * 2 + 1) {
+                dy := A_Index - outlinePx - 1
+                if (dx = 0 && dy = 0)
+                    continue
+                DllCall("TextOutW", "ptr", maskOutline.hdc, "int", gx + dx, "int", gy + dy, "wstr", glyph, "int", glyphLen)
+            }
+        }
+
+        ; Build fill mask
+        DllCall("TextOutW", "ptr", maskFill.hdc, "int", gx, "int", gy, "wstr", glyph, "int", glyphLen)
+
+        ; Composite onto destination icon bits: black outline then white fill
+        yStart := Max(0, gy - outlinePx)
+        xStart := Max(0, gx - outlinePx)
+        yEnd := Min(iconSize - 1, gy + glyphH + outlinePx - 1)
+        xEnd := Min(iconSize - 1, gx + glyphW + outlinePx - 1)
+
+        loop (yEnd - yStart + 1) {
+            y := yStart + A_Index - 1
+            loop (xEnd - xStart + 1) {
+                x := xStart + A_Index - 1
+                offset := ((y * iconSize + x) * 4)
+
+                outlinePx32 := NumGet(maskOutline.pBits + offset, "uint")
+                fillPx32 := NumGet(maskFill.pBits + offset, "uint")
+
+                if ((outlinePx32 & 0x00FFFFFF) != 0)
+                    NumPut("uint", outlineColor, destBits + offset)
+                if ((fillPx32 & 0x00FFFFFF) != 0)
+                    NumPut("uint", fontColor, destBits + offset)
+            }
+        }
+
+        DllCall("SetTextColor", "ptr", maskOutline.hdc, "uint", oldColorOutline)
+        DllCall("SetBkMode", "ptr", maskOutline.hdc, "int", oldBkOutline)
+        DllCall("SelectObject", "ptr", maskOutline.hdc, "ptr", oldFontOutline)
+
+        DllCall("SetTextColor", "ptr", maskFill.hdc, "uint", oldColorFill)
+        DllCall("SetBkMode", "ptr", maskFill.hdc, "int", oldBkFill)
+        DllCall("SelectObject", "ptr", maskFill.hdc, "ptr", oldFontFill)
+
+        DllCall("DeleteObject", "ptr", hFont)
+        SGlob.CleanupGlyphMask(maskOutline)
+        SGlob.CleanupGlyphMask(maskFill)
     }
 
     /**
@@ -294,6 +548,30 @@ Class SGlob {
      */
     static GetKomorebiBarProcesses() {
         return SGlob.ProcessGetByNameAndArguments("komorebi-bar.exe", "")
+    }
+
+    /**
+     * Gets the version of Komorebi by executing "komorebi --version" and reading the output.
+     * Flashes the console window ever so briefly, but this only happens during startup, so...
+     * @returns {String} The version of Komorebi and some build data.
+     */
+    static GetKomorebiVersion() {
+        if (SGlob.KomorebiVersionString != "")
+            return SGlob.KomorebiVersionString
+
+        shell := ComObject("WScript.Shell")
+        exec := shell.Exec("komorebi --version")
+
+        stdout := exec.StdOut.ReadAll()
+        stderr := exec.StdErr.ReadAll()
+
+        output := Trim(stdout)
+        if (output = "")
+            output := Trim(stderr)
+
+        SGlob.KomorebiVersionString := StrSplit(output, "`n", , 2)[1]
+
+        return SGlob.KomorebiVersionString
     }
 
     /**
@@ -521,7 +799,21 @@ Class SGlob {
      * @param {String[]} cmd komorebic command to execute
      */
     static Komorebic(cmd) {
-        RunWait(Format("komorebic.exe {}", cmd), , "Hide")
+        SGlob.KomorebicExt(cmd, wait := true)
+    }
+
+    /**
+     * Execute commands on Komorebi
+     * @param {Boolean} wait Whether to wait for the command to finish executing before continuing (default: true)
+     * @param {String[]} cmd komorebic command to execute
+     */
+    static KomorebicExt(cmd, wait := true) {
+        formattedCmd := Format("komorebic.exe {}", cmd)
+        if (wait) {
+            RunWait(formattedCmd, , "Hide")
+        } else {
+            Run(formattedCmd, , "Hide")
+        }
     }
 
     /**
@@ -2338,6 +2630,7 @@ Class KomorebiState {
     static FocusedMonitor := -1
     static FocusedWorkspace := -1
     static FocusedLayout := "Uninitialized"
+    static FocusedLayer := "Uninitialized"
     static NumberOfWorkspaces := Map()
     static IsPaused := false
 }
@@ -2376,8 +2669,10 @@ OnKomorebiPipeEvent(msg, bytesRead) {
     eventName := jsonObj["event"]["type"]
     
     ; Keep in memory to compare against new values!
+    _prevPause := KomorebiState.IsPaused
     _prevLayout := KomorebiState.FocusedLayout
     _prevMonitor := KomorebiState.FocusedMonitor
+    _prevLayer := KomorebiState.FocusedLayer
     
     ; Extract new state values from the msg
     KomorebiState.IsPaused := (SGlob.GetMapValue(jsonObj, "state", "is_paused") == 1)
@@ -2392,6 +2687,9 @@ OnKomorebiPipeEvent(msg, bytesRead) {
         return
     KomorebiState.FocusedLayout := SGlob.GetMapValue(jsonObj, "state", "monitors", "elements", KomorebiState.FocusedMonitor + 1, "workspaces", "elements", KomorebiState.FocusedWorkspace + 1, "layout", "Default")
     if (KomorebiState.FocusedLayout == "")
+        return
+    KomorebiState.FocusedLayer := SGlob.GetMapValue(jsonObj, "state", "monitors", "elements", KomorebiState.FocusedMonitor + 1, "workspaces", "elements", KomorebiState.FocusedWorkspace + 1, "layer")
+    if (KomorebiState.FocusedLayer == "")
         return
 
     ; Automatically determine the number of workspaces on each monitor.
@@ -2415,6 +2713,9 @@ OnKomorebiPipeEvent(msg, bytesRead) {
                 SGlob.Komorebic("layout-ratios --columns 0.5 --rows 0.5")
         }
     }
+
+    if (_prevPause != KomorebiState.IsPaused || _prevLayer != KomorebiState.FocusedLayer)
+        SGlob.AdjustTray()
 
     switch eventName {
         case "CycleFocusMonitor",
@@ -2451,18 +2752,6 @@ OnKomorebiPipeEvent(msg, bytesRead) {
 
             ; Only run FocusDesktopWorkaround if there is no active window.
             hwnd := WinActive("A")
-
-            ; On cycle-monitor we'll try to force the focus if there is a window
-            ; on the new monitor...
-            if (eventName == "CycleFocusMonitor") {
-                if (hwnd) {
-                    WinGetPos(&hwnd_x, &hwnd_y, &hwnd_w, &hwnd_h, "ahk_id " . hwnd)
-                    hwnd_mon := SGlob.GetMonitorByXYCoord(hwnd_x + hwnd_w // 2, hwnd_y + hwnd_h // 2, useZeroBasedIndex := true)
-
-                    if(hwnd_mon != -1 && hwnd_mon.monitorIndex != lastMonitorId)
-                        SGlob.Komorebic("force-focus")
-                }
-            }
 
             if (hwnd)
                 return
@@ -2540,7 +2829,7 @@ OnScriptExit(exitReason, exitCode) {
     SGlob.KillApplications()
 
     ; Unsubscribe from Komorebi IPC events
-    SGlob.Komorebic(Format("unsubscribe-pipe {}", SGlob.KomorebiPipeName))
+    SGlob.KomorebicExt(Format("unsubscribe-pipe {}", SGlob.KomorebiPipeName), wait := false)
 
     ; Unregister IPC listener
     komoPipeListener.Stop()

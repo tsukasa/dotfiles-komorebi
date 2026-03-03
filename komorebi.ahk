@@ -96,13 +96,16 @@ Class SGlob {
      * Only sets the tray icon if the file "komorebi-ahk.ico"
      * exists in the script's directory.
      */
-    static AdjustTray() {
+    static AdjustTray(onlyAdjustTooltip := false) {
         ; Set custom tray tooltip
         A_IconTip := "Komorebi AutoHotkey Helper`n`n" .
                      "Status: " (KomorebiState.IsPaused ? "Paused" : "Running") "`n" .
                      "Layout: " KomorebiState.FocusedLayout "`n" .
                      "Layer: " KomorebiState.FocusedLayer "`n`n" .
                      SGlob.GetKomorebiVersion()
+
+        if (onlyAdjustTooltip)
+            return
 
         ; Set custom tray icon
         iconPath := Format("{}\komorebi-ahk.ico", A_ScriptDir)
@@ -2714,7 +2717,9 @@ OnKomorebiPipeEvent(msg, bytesRead) {
         }
     }
 
-    if (_prevPause != KomorebiState.IsPaused || _prevLayer != KomorebiState.FocusedLayer)
+    if (_prevPause != KomorebiState.IsPaused ||
+        _prevLayer != KomorebiState.FocusedLayer ||
+        _prevLayout != KomorebiState.FocusedLayout)
         SGlob.AdjustTray()
 
     switch eventName {
@@ -2745,7 +2750,10 @@ OnKomorebiPipeEvent(msg, bytesRead) {
                     monitorId := 0
             }
 
-            if (SGlob.HandleCursorOnMonitorChange && lastMonitorId != monitorId) {
+            if (SGlob.HandleCursorOnMonitorChange &&
+                IsSet(lastMonitorId) &&
+                IsSet(monitorId) &&
+                lastMonitorId != monitorId) {
                 SGlob.SetCursorToMonitorNum(monitorId, useZeroBasedIndex := true)
                 lastMonitorId := monitorId
             }
